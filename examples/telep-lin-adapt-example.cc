@@ -25,7 +25,7 @@ NS_LOG_COMPONENT_DEFINE ("TelepLinAdaptExample");
 
 using namespace ns3;
 
-// #define N (8)
+#define N (8)
 /*
 Evaluating tensor network of size 202
  in 6.33792 secs
@@ -45,7 +45,7 @@ Evaluating tensor network of size 874
 Evaluating tensor network of size 1770
  in 54.291 secs
 */
-#define N (72)
+// #define N (72)
 /*
 Evaluating tensor network of size 1994
  in 61.025 secs

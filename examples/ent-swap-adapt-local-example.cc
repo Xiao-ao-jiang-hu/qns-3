@@ -32,7 +32,7 @@ using namespace ns3;
   the time cost of contraction scales linearly with N, the number of owners:
 */
 
-// #define N (8)
+#define N (8)
 /*
 Evaluating tensor network of size 71 in 2.44344 secs
 */

@@ -21,8 +21,8 @@ NS_LOG_COMPONENT_DEFINE ("EntSwapAdaptExample");
 
 using namespace ns3;
 
-// #define N (8) // 0 s, 126 tensors
-#define N (16) // 3 s, 270 tensors
+#define N (8) // 0 s, 126 tensors
+// #define N (16) // 3 s, 270 tensors
 // #define N (32) // 30 s, 558 tensors
 // #define N (64) // 280 s, 1134 tensors
 

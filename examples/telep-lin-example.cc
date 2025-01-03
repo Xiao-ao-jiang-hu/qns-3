@@ -23,7 +23,7 @@ NS_LOG_COMPONENT_DEFINE ("TelepLinExample");
 
 using namespace ns3;
 
-// #define N (4)
+#define N (4)
 /*
 Last round cost:
   Evaluating tensor network of size 110 in 3.83961 secs
@@ -37,7 +37,7 @@ Last round cost:
   Evaluating tensor network of size 328 in 5.92808 secs
 Total time cost: 37 s
 */
-#define N (12)
+// #define N (12)
 /*
 Last round cost:
   Evaluating tensor network of size 606 in 32.0905 secs
