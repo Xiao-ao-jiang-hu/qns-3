@@ -71,9 +71,7 @@ QuantumNetworkSimulator::PrepareQubitsPure (const std::string &name,
 {
   if (std::find (m_exatn_tensors.begin (), m_exatn_tensors.end (), name) != m_exatn_tensors.end ())
     {
-      std::cout << "Preparing a tensor named \"" + name + "\" for some qubits' state twice. \\
-                    Its okay but data ignored :)"
-                << std::endl;
+      NS_LOG_INFO ("Preparing a tensor named \"" << name << "\" for some qubits' state twice. Its okay but data ignored :)");
       return;
     }
   m_exatn_tensors.push_back (name);
@@ -89,9 +87,7 @@ QuantumNetworkSimulator::PrepareQubitsMixed (const std::string &name,
 {
   if (std::find (m_exatn_tensors.begin (), m_exatn_tensors.end (), name) != m_exatn_tensors.end ())
     {
-      std::cout << "Preparing a tensor named \"" + name + "\" for some qubits' state twice. \\
-                    Its okay but data ignored :)"
-                << std::endl;
+      NS_LOG_INFO ("Preparing a tensor named \"" << name << "\" for some qubits' state twice. Its okay but data ignored :)");
       return;
     }
   m_exatn_tensors.push_back (name);
@@ -680,7 +676,7 @@ QuantumNetworkSimulator::PeekDM (
   const std::complex<double> *body_ptr;
   if (talsh_tensor->getDataAccessHostConst (&body_ptr))
     {
-      printf ("[\n");
+      NS_LOG_INFO ("[\n]");
       assert (std::sqrt (talsh_tensor->getVolume ()) == std::pow (2, qubits.size ()));
       if (qubits.size () < 5)
         {
@@ -689,28 +685,28 @@ QuantumNetworkSimulator::PeekDM (
             {              
               if (i % dim == i / dim) // diagonal
                 {
-                  std::cout << "<" << body_ptr[i] << ">";
+                  NS_LOG_INFO ("<" << body_ptr[i] << ">");
                 }
               else
                 {
-                  std::cout << " " << body_ptr[i] << " ";
+                  NS_LOG_INFO (" " << body_ptr[i] << " ");
                 }
               if ((i + 1) % dim == 0)
                 {
-                  printf ("\n");
+                  NS_LOG_INFO ("\n");
                 }
               dm.push_back (body_ptr[i]);
             }
         }
       else
         { // too long for readability
-          printf ("...");
+          NS_LOG_INFO ("...");
           for (unsigned i = 0; i < talsh_tensor->getVolume (); ++i)
             {
               dm.push_back (body_ptr[i]);
             }
         }
-      printf ("]\n");
+      NS_LOG_INFO ("]\n");
     }
 
   return dm;
@@ -913,7 +909,7 @@ QuantumNetworkSimulator::CalculateFidelity (
   const std::complex<double> *body_ptr;
   if (talsh_tensor->getDataAccessHostConst (&body_ptr))
     {
-      printf ("[\n");
+      NS_LOG_INFO ("[\n");
       assert (std::sqrt (talsh_tensor->getVolume ()) == std::pow (2, qubits.size ()));
       if (qubits.size () < 5)
         {
@@ -922,23 +918,23 @@ QuantumNetworkSimulator::CalculateFidelity (
             {              
               if (i % dim == i / dim) // diagonal
                 {
-                  std::cout << "<" << body_ptr[i] << ">";
+                  NS_LOG_INFO ("<" << body_ptr[i] << ">");
                 }
               else
                 {
-                  std::cout << " " << body_ptr[i] << " ";
+                  NS_LOG_INFO (" " << body_ptr[i] << " ");
                 }
               if ((i + 1) % dim == 0)
                 {
-                  printf ("\n");
+                  NS_LOG_INFO ("\n");
                 }
             }
         }
       else
         { // too long for readability
-          printf ("...");
+          NS_LOG_INFO ("...");
         }
-      printf ("]\n");
+      NS_LOG_INFO ("]\n");
     }
 
   // calculate <bell|rho|bell>
@@ -1198,12 +1194,12 @@ QuantumNetworkSimulator::PrintTalshTensor (std::shared_ptr<talsh::Tensor> talsh_
 {
   if (talsh_tensor->getDataAccessHostConst (&body_ptr))
     {
-      printf ("[");
+      NS_LOG_INFO ("[");
       for (size_t i = 0; i < talsh_tensor->getVolume (); ++i)
         {
-          std::cout << "< " << body_ptr[i] << " >";
+          NS_LOG_INFO ("< " << body_ptr[i] << " >");
         }
-      printf ("]\n");
+      NS_LOG_INFO ("]\n");
     }
 }
 
@@ -1211,7 +1207,7 @@ void
 QuantumNetworkSimulator::PrintTalshTensorNamed (const std::string &name)
 {
   exatn::getTensor (name)->printIt ();
-  std::cout << "  <= shape, data=> ";
+  NS_LOG_LOGIC ("  <= shape, data=> ");
   auto talsh_tensor = exatn::getLocalTensor (name);
   assert (talsh_tensor);
   const std::complex<double> *body_ptr = nullptr;

@@ -24,7 +24,7 @@ NS_LOG_COMPONENT_DEFINE ("DistillNestedAdaptExample");
 
 // N stands for the # of EPR pairs shared between Alice and Bob
 
-// #define N (8)
+#define N (8)
 /*
 Evaluating tensor network of size 261
  in 8.22895 secs
@@ -44,7 +44,7 @@ Evaluating tensor network of size 1125
 Evaluating tensor network of size 2277
  in 53.9866 secs
 */
-#define N (128)
+// #define N (128)
 /*
 Evaluating tensor network of size 4581
  in 108.108 secs
@@ -127,7 +127,11 @@ main ()
   apps.Stop (Seconds (ETERNITY));
 
   Simulator::Stop (Seconds (ETERNITY));
+  auto start = std::chrono::high_resolution_clock::now ();
   Simulator::Run ();
+  auto end = std::chrono::high_resolution_clock::now ();
+  printf ("Total time cost: %ld s\n",
+          std::chrono::duration_cast<std::chrono::seconds> (end - start).count ());
   Simulator::Destroy ();
 
   return 0;

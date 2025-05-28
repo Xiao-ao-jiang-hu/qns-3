@@ -21,7 +21,7 @@ NS_LOG_COMPONENT_DEFINE ("DistillNestedExample");
 
 // N stands for the # of EPR pairs shared between Alice and Bob
 
-// #define N (4)
+#define N (4)
 /*
 Last round cost:
   Evaluating tensor network of size 127
@@ -30,7 +30,7 @@ Last round cost:
    in 0.819106 secs
 Total time cost: 7 s
 */
-#define N (8)
+// #define N (8)
 /*
 Last round cost:
   Evaluating tensor network of size 439

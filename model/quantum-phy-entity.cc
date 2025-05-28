@@ -459,14 +459,14 @@ QuantumPhyEntity::Checkpoint ()
 void
 QuantumPhyEntity::PrintConn2Apps () const
 {
-  std::cout << "-- m_conn2apps --\n";
+  NS_LOG_LOGIC ("-- m_conn2apps --");
   for (const auto &[conn, apps] : m_conn2apps)
     {
-      std::cout << conn.GetSrcOwner () << " <--> " << conn.GetDstOwner () << "\n";
+      NS_LOG_LOGIC ("  " << conn.GetSrcOwner () << " <--> " << conn.GetDstOwner ());
       for (const auto &[name, app_pair] : apps)
         {
-          std::cout << name << ": " << app_pair.first->GetTypeId ().GetName () << ", "
-                    << app_pair.second->GetTypeId ().GetName () << "\n";
+          NS_LOG_LOGIC (name << ": " << app_pair.first->GetTypeId ().GetName () << ", "
+                             << app_pair.second->GetTypeId ().GetName ());
         }
     }
 }

@@ -31,7 +31,7 @@ using namespace ns3;
   the time cost of contraction scales exponentially with N, the number of owners:
 */
 
-// #define N (4)
+#define N (4)
 /*
 Last round cost:
   Evaluating tensor network of size 53 in 1.74639 secs
@@ -45,7 +45,7 @@ Last round cost:
   Evaluating tensor network of size 197 in 7.99151 secs
 Total time cost: 38 s
 */
-#define N (16)
+// #define N (16)
 /*
 Last round cost:
   Evaluating tensor network of size 675 in 67.8974 secs
