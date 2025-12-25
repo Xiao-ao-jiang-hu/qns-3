@@ -10,8 +10,10 @@ if(${ENABLE_EXAMPLES})
         )
 endif()
 
-set(ExaTN_DIR ~/.exatn) # Your exatn install path
+set(ExaTN_DIR $ENV{HOME}/.exatn) # Your exatn install path
 find_package(ExaTN REQUIRED)
+
+link_directories(/usr/lib/gcc/x86_64-linux-gnu/11)
 
 # include_directories(SYSTEM ${EXATN_INCLUDE_DIRS} ${EXATN_INCLUDE_ROOT})
 
@@ -27,6 +29,10 @@ build_lib(
                 model/quantum-memory.cc
                 model/quantum-node.cc
                 model/quantum-channel.cc
+                model/quantum-header.cc
+                model/quantum-routing-protocol.cc
+                model/quantum-l3-protocol.cc
+                model/quantum-dijkstra-routing.cc
 
                 model/distribute-epr-protocol.cc
                 model/telep-app.cc
@@ -97,5 +103,5 @@ build_lib(
                  ${examples_as_tests_sources}
 )
 
-target_include_directories(libquantum-obj PUBLIC ${EXATN_INCLUDE_DIRS} ${EXATN_INCLUDE_ROOT})
+target_include_directories(${libquantum-obj} PUBLIC ${EXATN_INCLUDE_DIRS} ${EXATN_INCLUDE_ROOT})
 

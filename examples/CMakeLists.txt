@@ -1,28 +1,28 @@
 # teleportation
 
-build_lib_example(
-    NAME telep-app-example
-    SOURCE_FILES telep-app-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
+# build_lib_example(
+#     NAME telep-app-example
+#     SOURCE_FILES telep-app-example.cc
+#     LIBRARIES_TO_LINK ${libquantum}
+# )
 
-build_lib_example(
-    NAME telep-app-repeat-example
-    SOURCE_FILES telep-app-repeat-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
+# build_lib_example(
+#     NAME telep-app-repeat-example
+#     SOURCE_FILES telep-app-repeat-example.cc
+#     LIBRARIES_TO_LINK ${libquantum}
+# )
 
-build_lib_example(
-    NAME msg-flow-example
-    SOURCE_FILES msg-flow-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
+# build_lib_example(
+#     NAME msg-flow-example
+#     SOURCE_FILES msg-flow-example.cc
+#     LIBRARIES_TO_LINK ${libquantum}
+# )
 
-build_lib_example(
-    NAME telep-adapt-example
-    SOURCE_FILES telep-adapt-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
+# build_lib_example(
+#     NAME telep-adapt-example
+#     SOURCE_FILES telep-adapt-example.cc
+#     LIBRARIES_TO_LINK ${libquantum}
+# )
 
 build_lib_example(
     NAME telep-lin-example
@@ -51,6 +51,12 @@ build_lib_example(
 )
 
 build_lib_example(
+    NAME quantum-routing-example
+    SOURCE_FILES quantum-routing-example.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+build_lib_example(
     NAME ent-swap-adapt-local-example
     SOURCE_FILES ent-swap-adapt-local-example.cc
     LIBRARIES_TO_LINK ${libquantum}
@@ -58,23 +64,22 @@ build_lib_example(
 
 # distillation
 
-build_lib_example(
-    NAME distill-app-example
-    SOURCE_FILES distill-app-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
+# build_lib_example(
+#     NAME distill-app-example
+#     SOURCE_FILES distill-app-example.cc
+#     LIBRARIES_TO_LINK ${libquantum}
 
-build_lib_example(
-    NAME distill-app-repeat-example
-    SOURCE_FILES distill-app-repeat-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
+# build_lib_example(
+#     NAME distill-app-repeat-example
+#     SOURCE_FILES distill-app-repeat-example.cc
+#     LIBRARIES_TO_LINK ${libquantum}
+# )
 
-build_lib_example(
-    NAME distill-adapt-example
-    SOURCE_FILES distill-adapt-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
+# build_lib_example(
+#     NAME distill-adapt-example
+#     SOURCE_FILES distill-adapt-example.cc
+#     LIBRARIES_TO_LINK ${libquantum}
+# )
 
 build_lib_example(
     NAME distill-nested-example
