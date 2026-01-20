@@ -41,6 +41,14 @@ public:
 
 private:
   double m_linkSuccessRate; ///< Success rate of quantum links
+  double m_alpha;           ///< Alpha parameter for swap success probability (default 0.1)
+  
+  /**
+   * \brief Calculate swap success probability S(h)
+   * \param hopCount Number of hops (path length)
+   * \return Swap success probability
+   */
+  double CalculateSwapSuccessProbability(size_t hopCount) const;
 };
 
 } // namespace ns3

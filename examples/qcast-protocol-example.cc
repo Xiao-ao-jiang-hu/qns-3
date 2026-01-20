@@ -173,6 +173,18 @@ main (int argc, char *argv[])
     return 1;
   }
   
+  // Get network layers for all nodes
+  Ptr<QuantumNetworkLayer> networkLayerB = nodeB->GetQuantumNetworkLayer ();
+  Ptr<QuantumNetworkLayer> networkLayerC = nodeC->GetQuantumNetworkLayer ();
+  Ptr<QuantumNetworkLayer> networkLayerD = nodeD->GetQuantumNetworkLayer ();
+  Ptr<QuantumNetworkLayer> networkLayerE = nodeE->GetQuantumNetworkLayer ();
+  
+  if (!networkLayerB || !networkLayerC || !networkLayerD || !networkLayerE)
+  {
+    NS_LOG_ERROR ("Failed to get quantum network layer for all nodes");
+    return 1;
+  }
+  
   // =======================================================================
   // 创建和配置Q-CAST组件
   // =======================================================================
@@ -210,6 +222,47 @@ main (int argc, char *argv[])
   
   NS_LOG_INFO ("Q-CAST components configured successfully");
   
+  // Configure routing protocol for all nodes
+  // NodeA already configured above
+  // Create separate routing protocol instances for other nodes
+  Ptr<QCastRoutingProtocol> qcastRoutingB = CreateObject<QCastRoutingProtocol> ();
+  qcastRoutingB->SetMetric (etMetric);
+  qcastRoutingB->SetKHopDistance (3);
+  networkLayerB->SetRoutingProtocol (qcastRoutingB);
+  networkLayerB->SetForwardingEngine (qcastForwarding); // Can share forwarding engine
+  networkLayerB->SetResourceManager (resourceManager);
+  qcastRoutingB->SetNetworkLayer (networkLayerB);
+  qcastRoutingB->SetResourceManager (resourceManager);
+  
+  Ptr<QCastRoutingProtocol> qcastRoutingC = CreateObject<QCastRoutingProtocol> ();
+  qcastRoutingC->SetMetric (etMetric);
+  qcastRoutingC->SetKHopDistance (3);
+  networkLayerC->SetRoutingProtocol (qcastRoutingC);
+  networkLayerC->SetForwardingEngine (qcastForwarding);
+  networkLayerC->SetResourceManager (resourceManager);
+  qcastRoutingC->SetNetworkLayer (networkLayerC);
+  qcastRoutingC->SetResourceManager (resourceManager);
+  
+  Ptr<QCastRoutingProtocol> qcastRoutingD = CreateObject<QCastRoutingProtocol> ();
+  qcastRoutingD->SetMetric (etMetric);
+  qcastRoutingD->SetKHopDistance (3);
+  networkLayerD->SetRoutingProtocol (qcastRoutingD);
+  networkLayerD->SetForwardingEngine (qcastForwarding);
+  networkLayerD->SetResourceManager (resourceManager);
+  qcastRoutingD->SetNetworkLayer (networkLayerD);
+  qcastRoutingD->SetResourceManager (resourceManager);
+  
+  Ptr<QCastRoutingProtocol> qcastRoutingE = CreateObject<QCastRoutingProtocol> ();
+  qcastRoutingE->SetMetric (etMetric);
+  qcastRoutingE->SetKHopDistance (3);
+  networkLayerE->SetRoutingProtocol (qcastRoutingE);
+  networkLayerE->SetForwardingEngine (qcastForwarding);
+  networkLayerE->SetResourceManager (resourceManager);
+  qcastRoutingE->SetNetworkLayer (networkLayerE);
+  qcastRoutingE->SetResourceManager (resourceManager);
+  
+  NS_LOG_INFO ("Routing protocols configured for all nodes");
+  
   // =======================================================================
   // P2+P3阶段：邻居发现和链路状态交换
   // =======================================================================
@@ -219,6 +272,10 @@ main (int argc, char *argv[])
   
   // 执行邻居发现（同时进行链路状态交换）
   qcastRouting->DiscoverNeighbors ();
+  qcastRoutingB->DiscoverNeighbors ();
+  qcastRoutingC->DiscoverNeighbors ();
+  qcastRoutingD->DiscoverNeighbors ();
+  qcastRoutingE->DiscoverNeighbors ();
   
   // 获取邻居信息
   std::vector<Ptr<QuantumChannel>> neighbors = networkLayerA->GetNeighbors ();

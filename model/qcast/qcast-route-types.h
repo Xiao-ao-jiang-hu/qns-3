@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 #include <utility>
+#include <set>
 
 namespace ns3 {
 
@@ -119,6 +120,88 @@ struct ResidualNetworkGraph
    */
   bool IsPathConflictFree(const QuantumRoute& route,
                          const QuantumRouteRequirements& requirements) const;
+};
+
+/**
+ * \brief Topology Link-State Advertisement (LSA)
+ * 
+ * Each node generates LSAs containing its neighbor information.
+ * LSAs are flooded throughout the network to build global topology.
+ */
+struct TopologyLSA
+{
+  std::string nodeId;           ///< Source node ID
+  uint32_t sequenceNumber;      ///< Monotonically increasing sequence
+  Time timestamp;               ///< Creation time
+  std::vector<std::string> neighbors;  ///< Direct neighbor node IDs
+  std::vector<double> linkMetrics;     ///< Associated link metrics (fidelity, capacity)
+  
+  TopologyLSA();
+  
+  /**
+   * \brief Check if this LSA is newer than another LSA
+   * \param other The other LSA to compare with
+   * \return True if this LSA is newer, false otherwise
+   */
+  bool IsNewerThan(const TopologyLSA& other) const;
+  
+  /**
+   * \brief Get unique LSA identifier
+   * \return LSA ID string (nodeId + sequenceNumber)
+   */
+  std::string GetLSAId() const;
+};
+
+/**
+ * \brief Global topology database
+ * 
+ * Maintains complete network topology information constructed
+ * from received LSAs from all nodes.
+ */
+struct GlobalTopology
+{
+  std::set<std::string> allNodes;  ///< All node IDs in network
+  std::map<std::pair<std::string, std::string>, bool> connections;  ///< Adjacency matrix
+  std::map<std::string, TopologyLSA> lsaDatabase;  ///< Latest LSA from each node
+  Time lastUpdate;                                 ///< Last update time
+  
+  GlobalTopology();
+  
+  /**
+   * \brief Update topology from received LSA
+   * \param lsa The LSA to incorporate
+   */
+  void UpdateFromLSA(const TopologyLSA& lsa);
+  
+  /**
+   * \brief Rebuild topology graph from LSA database
+   */
+  void RebuildTopologyGraph();
+  
+  /**
+   * \brief Check if topology information is complete
+   * \return True if we have LSAs from all known nodes, false otherwise
+   */
+  bool IsComplete() const;
+  
+  /**
+   * \brief Get neighbors of a specific node
+   * \param nodeId Node to get neighbors for
+   * \return Vector of neighbor node IDs
+   */
+  std::vector<std::string> GetNeighbors(const std::string& nodeId) const;
+  
+  /**
+   * \brief Get total number of nodes in topology
+   * \return Node count
+   */
+  size_t GetNodeCount() const { return allNodes.size(); }
+  
+  /**
+   * \brief Check if topology is empty
+   * \return True if no nodes in topology, false otherwise
+   */
+  bool IsEmpty() const { return allNodes.empty(); }
 };
 
 } // namespace ns3

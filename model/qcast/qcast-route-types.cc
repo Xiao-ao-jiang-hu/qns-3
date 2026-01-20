@@ -88,4 +88,107 @@ bool ResidualNetworkGraph::IsPathConflictFree(const QuantumRoute& route,
   return true;
 }
 
+// TopologyLSA implementation
+TopologyLSA::TopologyLSA()
+  : nodeId(""),
+    sequenceNumber(0),
+    timestamp(Simulator::Now())
+{
+}
+
+bool TopologyLSA::IsNewerThan(const TopologyLSA& other) const
+{
+  if (nodeId != other.nodeId)
+    return false;  // Different nodes, not comparable
+  
+  // Higher sequence number means newer
+  return sequenceNumber > other.sequenceNumber;
+}
+
+std::string TopologyLSA::GetLSAId() const
+{
+  return nodeId + ":" + std::to_string(sequenceNumber);
+}
+
+// GlobalTopology implementation
+GlobalTopology::GlobalTopology()
+  : lastUpdate(Simulator::Now())
+{
+}
+
+void GlobalTopology::UpdateFromLSA(const TopologyLSA& lsa)
+{
+  // Update LSA database
+  lsaDatabase[lsa.nodeId] = lsa;
+  
+  // Add node to allNodes set
+  allNodes.insert(lsa.nodeId);
+  
+  // Update connections from neighbor list
+  for (const auto& neighbor : lsa.neighbors)
+  {
+    // Add neighbor to allNodes set
+    allNodes.insert(neighbor);
+    
+    // Create bidirectional connection
+    connections[{lsa.nodeId, neighbor}] = true;
+    connections[{neighbor, lsa.nodeId}] = true;
+  }
+  
+  lastUpdate = Simulator::Now();
+}
+
+void GlobalTopology::RebuildTopologyGraph()
+{
+  // Clear existing connections
+  connections.clear();
+  
+  // Rebuild from LSA database
+  for (const auto& lsaPair : lsaDatabase)
+  {
+    const TopologyLSA& lsa = lsaPair.second;
+    
+    // Add node to allNodes set
+    allNodes.insert(lsa.nodeId);
+    
+    // Add connections for each neighbor
+    for (const auto& neighbor : lsa.neighbors)
+    {
+      allNodes.insert(neighbor);
+      connections[{lsa.nodeId, neighbor}] = true;
+      connections[{neighbor, lsa.nodeId}] = true;
+    }
+  }
+}
+
+bool GlobalTopology::IsComplete() const
+{
+  // Check if we have LSAs from all nodes we know about
+  for (const auto& node : allNodes)
+  {
+    if (lsaDatabase.find(node) == lsaDatabase.end())
+      return false;
+  }
+  return true;
+}
+
+std::vector<std::string> GlobalTopology::GetNeighbors(const std::string& nodeId) const
+{
+  std::vector<std::string> neighborList;
+  
+  for (const auto& node : allNodes)
+  {
+    if (node != nodeId)
+    {
+      auto key = std::make_pair(nodeId, node);
+      if (connections.find(key) != connections.end() && connections.at(key))
+      {
+        neighborList.push_back(node);
+      }
+    }
+  }
+  
+  return neighborList;
+}
+
 } // namespace ns3

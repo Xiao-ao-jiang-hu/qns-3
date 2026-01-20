@@ -74,3 +74,10 @@ build_lib_example(
     LIBRARIES_TO_LINK ${libquantum}
 )
 
+# Quantum routing benchmark
+build_lib_example(
+    NAME quantum-routing-benchmark
+    SOURCE_FILES quantum-routing-benchmark.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+

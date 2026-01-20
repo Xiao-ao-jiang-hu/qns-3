@@ -97,6 +97,15 @@ private:
   double CalculateSuccessProbability(const QuantumRoute& mainRoute,
                                     const std::vector<QuantumRoute>& recoveryPaths) const;
   void BuildRecoveryRings(QCastRouteInfo& qcastInfo);
+  
+  // Topology discovery methods
+  void InitiateTopologyDiscovery();
+  void GenerateTopologyLSA();
+  void FloodTopologyLSA(const TopologyLSA& lsa);
+  void ProcessTopologyLSA(Ptr<QuantumPacket> packet);
+  void CheckTopologyConvergence();
+  void HandleTopologyConverged();
+  Ptr<QuantumChannel> FindChannel(const std::string& src, const std::string& dst) const;
 
   // Member variables
   Ptr<QuantumNetworkLayer> m_networkLayer;
@@ -119,6 +128,13 @@ private:
   std::map<uint32_t, QCastRouteInfo> m_qcastRoutes;  // Q-CAST route information
   ResidualNetworkGraph m_residualGraph;         // Residual network graph
   std::map<std::string, NeighborInfo> m_neighbors;  // Neighbor information
+  
+  // Topology discovery
+  GlobalTopology m_globalTopology;              ///< Global network topology
+  std::map<std::string, uint32_t> m_receivedSequenceNumbers;  ///< Latest LSA sequence from each node
+  Time m_topologyDiscoveryInterval;             ///< Interval for topology discovery (5 seconds)
+  bool m_topologyConverged;                     ///< Whether topology has converged
+  uint32_t m_myLsaSequenceNumber;               ///< My current LSA sequence number
 };
 
 } // namespace ns3

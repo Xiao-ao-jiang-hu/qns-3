@@ -100,7 +100,9 @@ public:
     ENTANGLEMENT_SWAP,  /**< Entanglement swap request */
     RESOURCE_REQUEST,   /**< Resource reservation request */
     RESOURCE_RESPONSE,  /**< Resource reservation response */
-    CONTROL             /**< General control packet */
+    CONTROL,            /**< General control packet */
+    TOPOLOGY_LSA,       /**< Topology Link-State Advertisement */
+    TOPOLOGY_REQUEST    /**< Request for topology information */
   };
   
   // Protocol types
