@@ -15,7 +15,7 @@ namespace ns3 {
 
 // KHopLinkState implementation
 KHopLinkState::KHopLinkState()
-  : lastUpdate(Simulator::Now())
+  : lastUpdate(Time(0))
 {
 }
 
@@ -27,7 +27,7 @@ bool KHopLinkState::IsExpired(Time expirationTime) const
 // QCastRouteInfo implementation
 QCastRouteInfo::QCastRouteInfo()
   : successProbability(0.0),
-    creationTime(Simulator::Now())
+    creationTime(Time(0))
 {
 }
 
@@ -92,7 +92,7 @@ bool ResidualNetworkGraph::IsPathConflictFree(const QuantumRoute& route,
 TopologyLSA::TopologyLSA()
   : nodeId(""),
     sequenceNumber(0),
-    timestamp(Simulator::Now())
+    timestamp(Time(0))
 {
 }
 
@@ -112,7 +112,7 @@ std::string TopologyLSA::GetLSAId() const
 
 // GlobalTopology implementation
 GlobalTopology::GlobalTopology()
-  : lastUpdate(Simulator::Now())
+  : lastUpdate(Time(0))
 {
 }
 
@@ -163,6 +163,10 @@ void GlobalTopology::RebuildTopologyGraph()
 
 bool GlobalTopology::IsComplete() const
 {
+  // If we know about no nodes, topology is not complete
+  if (allNodes.empty())
+    return false;
+    
   // Check if we have LSAs from all nodes we know about
   for (const auto& node : allNodes)
   {

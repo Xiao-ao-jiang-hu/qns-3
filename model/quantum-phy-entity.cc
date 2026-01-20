@@ -310,6 +310,32 @@ QuantumPhyEntity::SetDepolarModel (std::pair<std::string, std::string> conn, dou
                                          << " <--> " << conn.second);
   m_conn2model[conn] = pmodel;
 }
+
+double
+QuantumPhyEntity::GetConnectionFidelity (std::pair<std::string, std::string> conn) const
+{
+  // Try both directions
+  auto it = m_conn2model.find (conn);
+  if (it == m_conn2model.end ())
+  {
+    // Try reverse direction
+    std::pair<std::string, std::string> reverseConn = {conn.second, conn.first};
+    it = m_conn2model.find (reverseConn);
+  }
+  
+  if (it != m_conn2model.end ())
+  {
+    // Get fidelity from the DepolarModel
+    Ptr<DepolarModel> depolarModel = DynamicCast<DepolarModel> (it->second);
+    if (depolarModel)
+    {
+      return depolarModel->GetFidelity ();
+    }
+  }
+  
+  // Return default fidelity if no model is set
+  return default_depolar_model.GetFidelity ();
+}
 void
 QuantumPhyEntity::ApplyErrorModel ( // using DepolarModel
     std::pair<std::string, std::string> conn, const std::pair<std::string, std::string> &epr)

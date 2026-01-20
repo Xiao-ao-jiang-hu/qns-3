@@ -69,6 +69,7 @@ struct QuantumRoute
   std::string source;                         /**< Source node address */
   std::string destination;                    /**< Destination node address */
   std::vector<Ptr<QuantumChannel>> path;      /**< Sequence of channels forming the path */
+  std::vector<std::string> nodeSequence;      /**< Sequence of node addresses in the path */
   double totalCost;                           /**< Total cost of the route */
   double estimatedFidelity;                   /**< Estimated end-to-end fidelity */
   Time estimatedDelay;                        /**< Estimated end-to-end delay */
@@ -87,11 +88,16 @@ struct QuantumRoute
   
   bool IsValid() const
   {
-    return !source.empty() && !destination.empty() && !path.empty();
+    // Route is valid if we have either channel path or node sequence
+    return !source.empty() && !destination.empty() && 
+           (!path.empty() || nodeSequence.size() >= 2);
   }
   
   size_t GetHopCount() const
   {
+    // Use node sequence if available, otherwise use path
+    if (!nodeSequence.empty())
+      return nodeSequence.size() - 1;
     return path.size();
   }
   

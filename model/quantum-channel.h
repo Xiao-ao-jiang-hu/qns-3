@@ -41,6 +41,13 @@ public:
    * 
   */
   void SetDepolarModel (double fidel, Ptr<QuantumPhyEntity> qphyent);
+  
+  /**
+   * \brief Get the fidelity of this channel.
+   * \param qphyent Quantum physical entity containing the error model.
+   * \return Fidelity of the channel (default 0.95 if not set).
+   */
+  double GetFidelity (Ptr<QuantumPhyEntity> qphyent) const;
 
   bool operator<(const QuantumChannel &other) const;
 

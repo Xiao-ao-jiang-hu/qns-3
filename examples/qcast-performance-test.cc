@@ -381,11 +381,12 @@ private:
  * \brief 创建链式拓扑
  * 
  * @param numNodes 节点数量
+ * @param linkFidelity 链路保真度（用于物理层去极化模型）
  * @param nodePrefix 节点名前缀
  * @return 节点向量和通道向量
  */
 std::pair<std::vector<Ptr<QuantumNode>>, std::vector<Ptr<QuantumChannel>>>
-CreateChainTopology(int numNodes, const std::string& nodePrefix = "Node")
+CreateChainTopology(int numNodes, double linkFidelity = 0.95, const std::string& nodePrefix = "Node")
 {
   std::vector<std::string> owners;
   for (int i = 0; i < numNodes; ++i)
@@ -404,7 +405,10 @@ CreateChainTopology(int numNodes, const std::string& nodePrefix = "Node")
   std::vector<Ptr<QuantumChannel>> channels;
   for (int i = 0; i < numNodes - 1; ++i)
   {
-    channels.push_back(CreateObject<QuantumChannel> (owners[i], owners[i+1]));
+    Ptr<QuantumChannel> channel = CreateObject<QuantumChannel> (owners[i], owners[i+1]);
+    // Set the depolarization model for actual fidelity calculation
+    channel->SetDepolarModel(linkFidelity, qphyent);
+    channels.push_back(channel);
   }
   
   return {nodes, channels};
@@ -415,11 +419,12 @@ CreateChainTopology(int numNodes, const std::string& nodePrefix = "Node")
  * 
  * @param rows 行数
  * @param cols 列数
+ * @param linkFidelity 链路保真度（用于物理层去极化模型）
  * @param nodePrefix 节点名前缀
  * @return 节点向量和通道向量
  */
 std::pair<std::vector<Ptr<QuantumNode>>, std::vector<Ptr<QuantumChannel>>>
-CreateGridTopology(int rows, int cols, const std::string& nodePrefix = "Node")
+CreateGridTopology(int rows, int cols, double linkFidelity = 0.95, const std::string& nodePrefix = "Node")
 {
   std::vector<std::string> owners;
   for (int r = 0; r < rows; ++r)
@@ -447,7 +452,9 @@ CreateGridTopology(int rows, int cols, const std::string& nodePrefix = "Node")
     {
       int idx1 = r * cols + c;
       int idx2 = r * cols + c + 1;
-      channels.push_back(CreateObject<QuantumChannel> (owners[idx1], owners[idx2]));
+      Ptr<QuantumChannel> channel = CreateObject<QuantumChannel> (owners[idx1], owners[idx2]);
+      channel->SetDepolarModel(linkFidelity, qphyent);
+      channels.push_back(channel);
     }
   }
   
@@ -458,7 +465,9 @@ CreateGridTopology(int rows, int cols, const std::string& nodePrefix = "Node")
     {
       int idx1 = r * cols + c;
       int idx2 = (r + 1) * cols + c;
-      channels.push_back(CreateObject<QuantumChannel> (owners[idx1], owners[idx2]));
+      Ptr<QuantumChannel> channel = CreateObject<QuantumChannel> (owners[idx1], owners[idx2]);
+      channel->SetDepolarModel(linkFidelity, qphyent);
+      channels.push_back(channel);
     }
   }
   
@@ -470,11 +479,13 @@ CreateGridTopology(int rows, int cols, const std::string& nodePrefix = "Node")
  * 
  * @param numNodes 节点数量
  * @param connectionProbability 连接概率
+ * @param linkFidelity 链路保真度（用于物理层去极化模型）
  * @param nodePrefix 节点名前缀
  * @return 节点向量和通道向量
  */
 std::pair<std::vector<Ptr<QuantumNode>>, std::vector<Ptr<QuantumChannel>>>
 CreateRandomTopology(int numNodes, double connectionProbability, 
+                    double linkFidelity = 0.95,
                     const std::string& nodePrefix = "Node")
 {
   Ptr<UniformRandomVariable> randVar = CreateObject<UniformRandomVariable> ();
@@ -498,7 +509,10 @@ CreateRandomTopology(int numNodes, double connectionProbability,
   // 确保连通性：创建最小生成树
   for (int i = 0; i < numNodes - 1; ++i)
   {
-    channels.push_back(CreateObject<QuantumChannel> (owners[i], owners[i+1]));
+    Ptr<QuantumChannel> channel = CreateObject<QuantumChannel> (owners[i], owners[i+1]);
+    // Set the depolarization model for actual fidelity calculation
+    channel->SetDepolarModel(linkFidelity, qphyent);
+    channels.push_back(channel);
   }
   
   // 随机添加额外连接
@@ -508,7 +522,10 @@ CreateRandomTopology(int numNodes, double connectionProbability,
     {
       if (randVar->GetValue(0, 1) < connectionProbability)
       {
-        channels.push_back(CreateObject<QuantumChannel> (owners[i], owners[j]));
+        Ptr<QuantumChannel> channel = CreateObject<QuantumChannel> (owners[i], owners[j]);
+        // Set the depolarization model for actual fidelity calculation
+        channel->SetDepolarModel(linkFidelity, qphyent);
+        channels.push_back(channel);
       }
     }
   }
@@ -561,13 +578,15 @@ std::string GetNodeOwnerName(const std::string& topologyType,
  * @param linkSuccessRate 链路成功率
  * @param concurrentRequests 并发路由请求数
  * @param testName 测试名称
+ * @param eprCapacity 每个通道的EPR对容量（默认10）
  * @return 性能结果
  */
 PerformanceResult RunPerformanceTest(const std::string& topologyType,
                                     int numNodes,
                                     double linkSuccessRate,
                                     int concurrentRequests,
-                                    const std::string& testName)
+                                    const std::string& testName,
+                                    unsigned eprCapacity = 10)
 {
   NS_LOG_INFO("");
   NS_LOG_INFO("=================================================================");
@@ -576,6 +595,7 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
   NS_LOG_INFO("节点数量: " << numNodes);
   NS_LOG_INFO("链路成功率: " << linkSuccessRate);
   NS_LOG_INFO("并发请求数: " << concurrentRequests);
+  NS_LOG_INFO("EPR容量: " << eprCapacity);
   NS_LOG_INFO("=================================================================");
   
   // 创建拓扑
@@ -585,7 +605,7 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
   
   if (topologyType == "chain")
   {
-    auto result = CreateChainTopology(numNodes);
+    auto result = CreateChainTopology(numNodes, linkSuccessRate);
     nodes = result.first;
     channels = result.second;
   }
@@ -594,13 +614,13 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
     // 计算网格尺寸
     rows = (int)std::sqrt(numNodes);
     cols = (numNodes + rows - 1) / rows; // 向上取整
-    auto result = CreateGridTopology(rows, cols);
+    auto result = CreateGridTopology(rows, cols, linkSuccessRate);
     nodes = result.first;
     channels = result.second;
   }
   else if (topologyType == "random")
   {
-    auto result = CreateRandomTopology(numNodes, 0.3); // 30%连接概率
+    auto result = CreateRandomTopology(numNodes, 0.3, linkSuccessRate); // 30%连接概率
     nodes = result.first;
     channels = result.second;
   }
@@ -649,11 +669,6 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
   Ptr<ExpectedThroughputMetric> etMetric = CreateObject<ExpectedThroughputMetric> ();
   etMetric->SetLinkSuccessRate(linkSuccessRate);
   
-  // 创建Q-CAST路由协议（k=3）
-  Ptr<QCastRoutingProtocol> routingProtocol = CreateObject<QCastRoutingProtocol>();
-  routingProtocol->SetMetric(etMetric);
-  routingProtocol->SetKHopDistance(3);
-  
   // 创建Q-CAST转发引擎
   Ptr<QCastForwardingEngine> forwardingEngine = CreateObject<QCastForwardingEngine>();
   forwardingEngine->SetForwardingStrategy(QFS_ON_DEMAND);
@@ -661,27 +676,84 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
   // 获取资源管理器
   Ptr<QuantumResourceManager> resourceManager = QuantumResourceManager::GetDefaultResourceManager();
   
-  // 配置第一个节点的网络层（作为测试源节点）
+  // 设置每个通道的EPR容量
+  for (const auto& channel : channels)
+  {
+    resourceManager->SetEPRCapacity(channel, eprCapacity);
+  }
+  NS_LOG_INFO("设置所有通道EPR容量为: " << eprCapacity);
+  
+  // 配置所有节点的网络层
   if (nodes.empty())
   {
     NS_LOG_ERROR("没有可用的节点");
     return PerformanceResult();
   }
   
-  Ptr<QuantumNode> sourceNode = nodes[0];
-  Ptr<QuantumNetworkLayer> networkLayer = sourceNode->GetQuantumNetworkLayer();
-  if (!networkLayer)
+  // 存储所有路由协议实例和网络层
+  std::vector<Ptr<QCastRoutingProtocol>> allRoutingProtocols;
+  std::vector<Ptr<QuantumNetworkLayer>> allNetworkLayers;
+  Ptr<QCastRoutingProtocol> sourceRoutingProtocol = nullptr;
+  Ptr<QuantumNetworkLayer> sourceNetworkLayer = nullptr;
+  
+  for (size_t i = 0; i < nodes.size(); ++i)
   {
-    NS_LOG_ERROR("无法获取网络层");
+    Ptr<QuantumNode> node = nodes[i];
+    Ptr<QuantumNetworkLayer> networkLayer = node->GetQuantumNetworkLayer();
+    
+    if (!networkLayer)
+    {
+      NS_LOG_ERROR("无法获取节点 " << i << " 的网络层");
+      continue;
+    }
+    
+    // 设置节点地址
+    std::string nodeAddress = GetNodeOwnerName(topologyType, i, rows, cols);
+    networkLayer->SetAddress(nodeAddress);
+    
+    // 为每个节点创建独立的路由协议实例
+    Ptr<QCastRoutingProtocol> nodeRoutingProtocol = CreateObject<QCastRoutingProtocol>();
+    nodeRoutingProtocol->SetMetric(etMetric);
+    nodeRoutingProtocol->SetKHopDistance(3);
+    
+    // 配置网络层
+    networkLayer->SetRoutingProtocol(nodeRoutingProtocol);
+    networkLayer->SetForwardingEngine(forwardingEngine);
+    networkLayer->SetResourceManager(resourceManager);
+    
+    // 配置路由协议
+    nodeRoutingProtocol->SetNetworkLayer(networkLayer);
+    nodeRoutingProtocol->SetResourceManager(resourceManager);
+    
+    // 注册网络层到转发引擎注册表
+    QCastForwardingEngine::RegisterNetworkLayer(nodeAddress, networkLayer);
+    
+    // 保存引用
+    allRoutingProtocols.push_back(nodeRoutingProtocol);
+    allNetworkLayers.push_back(networkLayer);
+    
+    // 如果是源节点（第一个节点），保存特殊引用
+    if (i == 0)
+    {
+      sourceRoutingProtocol = nodeRoutingProtocol;
+      sourceNetworkLayer = networkLayer;
+      NS_LOG_INFO("配置源节点: " << nodeAddress);
+    }
+    else
+    {
+      NS_LOG_LOGIC("配置节点 " << i << ": " << nodeAddress);
+    }
+  }
+  
+  if (!sourceRoutingProtocol || !sourceNetworkLayer)
+  {
+    NS_LOG_ERROR("无法配置源节点");
     return PerformanceResult();
   }
   
-  networkLayer->SetRoutingProtocol(routingProtocol);
-  networkLayer->SetForwardingEngine(forwardingEngine);
-  networkLayer->SetResourceManager(resourceManager);
-  
-  routingProtocol->SetNetworkLayer(networkLayer);
-  routingProtocol->SetResourceManager(resourceManager);
+  // 为后续使用设置引用
+  Ptr<QCastRoutingProtocol> routingProtocol = sourceRoutingProtocol;
+  Ptr<QuantumNetworkLayer> networkLayer = sourceNetworkLayer;
   
   // 性能收集器
   PerformanceCollector collector;
@@ -689,6 +761,13 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
   // 执行邻居发现
   NS_LOG_INFO("执行邻居发现...");
   routingProtocol->DiscoverNeighbors();
+  
+  // Simulate topology exchange to accelerate convergence
+  NS_LOG_INFO("模拟拓扑交换以加速收敛...");
+  if (!allRoutingProtocols.empty())
+  {
+    allRoutingProtocols[0]->SimulateTopologyExchange(allNetworkLayers);
+  }
   
   // 运行并发路由请求
   NS_LOG_INFO("运行" << concurrentRequests << "个并发路由请求...");
@@ -720,7 +799,7 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
     
     // 执行路由请求
     Time requestStartTime = Simulator::Now();
-    QuantumRoute route = routingProtocol->RouteRequest(sourceNode->GetQuantumNetworkLayer()->GetAddress(), 
+    QuantumRoute route = routingProtocol->RouteRequest(sourceNetworkLayer->GetAddress(), 
                                                       destAddress, 
                                                       requirements);
     
@@ -735,7 +814,7 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
       collector.RecordResourceReservationAttempt(true);
       
       // 可选：发送测试包
-      Ptr<QuantumPacket> packet = CreateObject<QuantumPacket>(sourceNode->GetQuantumNetworkLayer()->GetAddress(), destAddress);
+       Ptr<QuantumPacket> packet = CreateObject<QuantumPacket>(sourceNetworkLayer->GetAddress(), destAddress);
       packet->SetType(QuantumPacket::DATA);
       packet->SetProtocol(QuantumPacket::PROTO_QUANTUM_FORWARDING);
       packet->SetRoute(route);
@@ -761,7 +840,7 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
   collector.RecordProtocolStats(routingStats, forwardingStats);
   
   // 收集资源利用率
-  double memoryUtilization = resourceManager->GetMemoryUtilization(sourceNode->GetQuantumNetworkLayer()->GetAddress());
+  double memoryUtilization = resourceManager->GetMemoryUtilization(sourceNetworkLayer->GetAddress());
   collector.RecordResourceUtilization(memoryUtilization);
   
   // 计算性能结果
@@ -770,6 +849,25 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
                                                 channels.size(),
                                                 linkSuccessRate,
                                                 concurrentRequests);
+  
+  // Print routing tables and topology for debugging
+  NS_LOG_INFO("");
+  NS_LOG_INFO("=== Debug Information ===");
+  for (size_t i = 0; i < allRoutingProtocols.size(); ++i)
+  {
+    Ptr<QCastRoutingProtocol> proto = allRoutingProtocols[i];
+    Ptr<QuantumNetworkLayer> layer = allNetworkLayers[i];
+    
+    if (proto && layer)
+    {
+      NS_LOG_INFO("");
+      NS_LOG_INFO("--- Node " << layer->GetAddress() << " ---");
+      proto->PrintRoutingTable();
+      proto->PrintGlobalTopology();
+    }
+  }
+  NS_LOG_INFO("=== End Debug Information ===");
+  NS_LOG_INFO("");
   
   // 清理
   Simulator::Destroy();
@@ -821,78 +919,94 @@ int main(int argc, char *argv[])
   
   std::vector<PerformanceResult> allResults;
   
-  // 测试套件1：不同拓扑规模
+  // 测试套件1：不同拓扑规模（10-100节点）和不同EPR容量（10, 20, 50）
   if (runAllTests || singleTest == "test1")
   {
     NS_LOG_INFO("");
-    NS_LOG_INFO("运行测试套件1: 不同拓扑规模");
+    NS_LOG_INFO("运行测试套件1: 不同拓扑规模和EPR容量");
     
-    // 链式拓扑：5节点
-    PerformanceResult result1 = RunPerformanceTest("chain", 5, 0.95, 10, 
-                                                   "chain_5nodes_95pct_10req");
-    allResults.push_back(result1);
-    outputStream << result1.ToCsvString() << std::endl;
+    // 网络规模：10, 25, 49, 64, 100节点
+    std::vector<int> nodeCounts = {10, 25, 49, 64, 100};
+    // EPR容量：10, 20, 50
+    std::vector<unsigned> eprCapacities = {10, 20, 50};
     
-    // 链式拓扑：10节点
-    PerformanceResult result2 = RunPerformanceTest("chain", 10, 0.95, 10,
-                                                   "chain_10nodes_95pct_10req");
-    allResults.push_back(result2);
-    outputStream << result2.ToCsvString() << std::endl;
-    
-    // 网格拓扑：3x3 (9节点)
-    PerformanceResult result3 = RunPerformanceTest("grid", 9, 0.95, 10,
-                                                   "grid_9nodes_95pct_10req");
-    allResults.push_back(result3);
-    outputStream << result3.ToCsvString() << std::endl;
-    
-    // 网格拓扑：4x4 (16节点)
-    PerformanceResult result4 = RunPerformanceTest("grid", 16, 0.95, 10,
-                                                   "grid_16nodes_95pct_10req");
-    allResults.push_back(result4);
-    outputStream << result4.ToCsvString() << std::endl;
-    
-    // 随机拓扑：15节点
-    PerformanceResult result5 = RunPerformanceTest("random", 15, 0.95, 10,
-                                                   "random_15nodes_95pct_10req");
-    allResults.push_back(result5);
-    outputStream << result5.ToCsvString() << std::endl;
-  }
-  
-  // 测试套件2：不同链路质量
-  if (runAllTests || singleTest == "test2")
-  {
-    NS_LOG_INFO("");
-    NS_LOG_INFO("运行测试套件2: 不同链路质量");
-    
-    // 固定9节点网格，改变链路成功率
-    std::vector<double> successRates = {0.7, 0.8, 0.9, 0.95, 0.99};
-    for (size_t i = 0; i < successRates.size(); ++i)
+    for (int numNodes : nodeCounts)
     {
-      std::string testName = "grid_9nodes_" + 
-                            std::to_string((int)(successRates[i] * 100)) + 
-                            "pct_10req";
-      PerformanceResult result = RunPerformanceTest("grid", 9, successRates[i], 10, testName);
-      allResults.push_back(result);
-      outputStream << result.ToCsvString() << std::endl;
+      for (unsigned eprCap : eprCapacities)
+      {
+        // 网格拓扑测试
+        std::string testName = "grid_" + std::to_string(numNodes) + "nodes_epr" + 
+                              std::to_string(eprCap) + "_95pct_20req";
+        PerformanceResult result = RunPerformanceTest("grid", numNodes, 0.95, 20, testName, eprCap);
+        allResults.push_back(result);
+        outputStream << result.ToCsvString() << std::endl;
+      }
     }
   }
   
-  // 测试套件3：不同并发负载
+  // 测试套件2：随机拓扑测试（10-100节点）
+  if (runAllTests || singleTest == "test2")
+  {
+    NS_LOG_INFO("");
+    NS_LOG_INFO("运行测试套件2: 随机拓扑不同规模和EPR容量");
+    
+    std::vector<int> nodeCounts = {10, 25, 50, 75, 100};
+    std::vector<unsigned> eprCapacities = {10, 20, 50};
+    
+    for (int numNodes : nodeCounts)
+    {
+      for (unsigned eprCap : eprCapacities)
+      {
+        std::string testName = "random_" + std::to_string(numNodes) + "nodes_epr" + 
+                              std::to_string(eprCap) + "_95pct_20req";
+        PerformanceResult result = RunPerformanceTest("random", numNodes, 0.95, 20, testName, eprCap);
+        allResults.push_back(result);
+        outputStream << result.ToCsvString() << std::endl;
+      }
+    }
+  }
+  
+  // 测试套件3：链式拓扑测试（10-100节点）
   if (runAllTests || singleTest == "test3")
   {
     NS_LOG_INFO("");
-    NS_LOG_INFO("运行测试套件3: 不同并发负载");
+    NS_LOG_INFO("运行测试套件3: 链式拓扑不同规模和EPR容量");
     
-    // 固定9节点网格，95%成功率，改变并发请求数
-    std::vector<int> concurrentRequests = {1, 5, 10, 20, 50};
-    for (size_t i = 0; i < concurrentRequests.size(); ++i)
+    std::vector<int> nodeCounts = {10, 25, 50, 75, 100};
+    std::vector<unsigned> eprCapacities = {10, 20, 50};
+    
+    for (int numNodes : nodeCounts)
     {
-      std::string testName = "grid_9nodes_95pct_" + 
-                            std::to_string(concurrentRequests[i]) + "req";
-      PerformanceResult result = RunPerformanceTest("grid", 9, 0.95, 
-                                                   concurrentRequests[i], testName);
-      allResults.push_back(result);
-      outputStream << result.ToCsvString() << std::endl;
+      for (unsigned eprCap : eprCapacities)
+      {
+        std::string testName = "chain_" + std::to_string(numNodes) + "nodes_epr" + 
+                              std::to_string(eprCap) + "_95pct_20req";
+        PerformanceResult result = RunPerformanceTest("chain", numNodes, 0.95, 20, testName, eprCap);
+        allResults.push_back(result);
+        outputStream << result.ToCsvString() << std::endl;
+      }
+    }
+  }
+  
+  // 测试套件4：不同并发负载（固定64节点网格）
+  if (runAllTests || singleTest == "test4")
+  {
+    NS_LOG_INFO("");
+    NS_LOG_INFO("运行测试套件4: 不同并发负载");
+    
+    std::vector<int> concurrentRequests = {10, 20, 50, 100};
+    std::vector<unsigned> eprCapacities = {10, 20, 50};
+    
+    for (unsigned eprCap : eprCapacities)
+    {
+      for (int reqCount : concurrentRequests)
+      {
+        std::string testName = "grid_64nodes_epr" + std::to_string(eprCap) + 
+                              "_95pct_" + std::to_string(reqCount) + "req";
+        PerformanceResult result = RunPerformanceTest("grid", 64, 0.95, reqCount, testName, eprCap);
+        allResults.push_back(result);
+        outputStream << result.ToCsvString() << std::endl;
+      }
     }
   }
   

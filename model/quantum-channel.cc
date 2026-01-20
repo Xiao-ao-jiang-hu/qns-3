@@ -76,6 +76,12 @@ QuantumChannel::SetDepolarModel (double fidel, Ptr<QuantumPhyEntity> qphyent)
   qphyent->SetDepolarModel ({m_src_owner, m_dst_owner}, fidel);
 }
 
+double
+QuantumChannel::GetFidelity (Ptr<QuantumPhyEntity> qphyent) const
+{
+  return qphyent->GetConnectionFidelity ({m_src_owner, m_dst_owner});
+}
+
 bool
 QuantumChannel::operator<(const QuantumChannel &other) const
 {

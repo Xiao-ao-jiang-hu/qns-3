@@ -8,25 +8,34 @@
  */
 
 #include "qcast-routing-protocol.h"
+
 #include "ns3/log.h"
 #include "ns3/simulator.h"
+#include "ns3/nstime.h"
+#include "ns3/object.h"
+#include "ns3/ptr.h"
+
 #include "../quantum-channel.h"
 #include "../quantum-packet.h"
+#include "../quantum-node.h"
+#include "../quantum-phy-entity.h"
+
 #include <algorithm>
 #include <cmath>
 
-namespace ns3 {
-
 NS_LOG_COMPONENT_DEFINE ("QCastRoutingProtocol");
+
+namespace ns3 {
+using namespace std;
 
 // ===========================================================================
 // QCastRoutingProtocol implementation
 // ===========================================================================
 
 QCastRoutingProtocol::QCastRoutingProtocol ()
-  : m_kHopDistance (3),  // k=3
-    m_routeExpirationTimeout (Seconds (30.0)),
+  : m_routeExpirationTimeout (Seconds (30.0)),
     m_linkStateExchangeInterval (Seconds (1.0)),  // Exchange link state every second
+    m_kHopDistance (3),  // k=3
     m_topologyDiscoveryInterval (Seconds (5.0)),  // Topology discovery interval (5 seconds)
     m_topologyConverged (false),
     m_myLsaSequenceNumber (0)
@@ -131,38 +140,92 @@ QCastRoutingProtocol::BuildResidualNetworkGraph ()
                   << nodeInfo.availableQubits << " available qubits");
   }
   
-  // Build channel information
-  // We only add channels where we have actual QuantumChannel objects
-  // (i.e., connections to direct neighbors)
-  for (const auto& neighbor : m_neighbors)
+  // Build channel information from global topology
+  if (m_topologyConverged && !m_globalTopology.IsEmpty ())
   {
-    if (m_networkLayer)
+    // Add channels for ALL connections in global topology
+    for (const auto& conn : m_globalTopology.connections)
     {
-      std::string myAddress = m_networkLayer->GetAddress ();
-      std::pair<std::string, std::string> key = std::make_pair (myAddress, neighbor.first);
+      if (!conn.second)  // Skip if connection doesn't exist
+        continue;
+        
+      std::string src = conn.first.first;
+      std::string dst = conn.first.second;
       
       // Check if both nodes are in the graph
-      if (m_residualGraph.nodes.find (myAddress) != m_residualGraph.nodes.end () &&
-          m_residualGraph.nodes.find (neighbor.first) != m_residualGraph.nodes.end ())
+      if (m_residualGraph.nodes.find (src) == m_residualGraph.nodes.end () ||
+          m_residualGraph.nodes.find (dst) == m_residualGraph.nodes.end ())
+        continue;
+      
+      std::pair<std::string, std::string> key = std::make_pair (src, dst);
+      
+      // Skip if already added
+      if (m_residualGraph.channels.find (key) != m_residualGraph.channels.end ())
+        continue;
+      
+      ResidualChannelInfo channelInfo;
+      channelInfo.src = src;
+      channelInfo.dst = dst;
+      
+      // Check if this is a direct neighbor connection (we have actual channel object)
+      bool isDirectNeighbor = false;
+      std::string myAddress = m_networkLayer ? m_networkLayer->GetAddress () : "";
+      
+      if (src == myAddress)
       {
-        ResidualChannelInfo channelInfo;
-        channelInfo.src = myAddress;
-        channelInfo.dst = neighbor.first;
-        channelInfo.availableEPRCapacity = m_resourceManager->GetAvailableEPRCapacity (neighbor.second.channel);
-        channelInfo.cost = m_metric ? m_metric->CalculateChannelCost (neighbor.second.channel) : 1.0;
+        auto neighborIt = m_neighbors.find (dst);
+        if (neighborIt != m_neighbors.end () && neighborIt->second.channel)
+        {
+          isDirectNeighbor = true;
+          channelInfo.availableEPRCapacity = m_resourceManager->GetAvailableEPRCapacity (neighborIt->second.channel);
+          channelInfo.cost = m_metric ? m_metric->CalculateChannelCost (neighborIt->second.channel) : 1.0;
+        }
+      }
+      
+      if (!isDirectNeighbor)
+      {
+        // Use default/estimated values for non-direct connections
+        channelInfo.availableEPRCapacity = 10;  // Default EPR capacity
+        channelInfo.cost = 1.05;  // Default cost (slightly higher than direct)
+      }
+      
+      m_residualGraph.channels[key] = channelInfo;
+      
+      NS_LOG_LOGIC ("Added channel " << src << " -> " << dst
+                    << " with capacity=" << channelInfo.availableEPRCapacity
+                    << ", cost=" << channelInfo.cost
+                    << (isDirectNeighbor ? " (direct)" : " (global)"));
+    }
+  }
+  else
+  {
+    // Fall back to direct neighbor channels only
+    for (const auto& neighbor : m_neighbors)
+    {
+      if (m_networkLayer)
+      {
+        std::string myAddress = m_networkLayer->GetAddress ();
+        std::pair<std::string, std::string> key = std::make_pair (myAddress, neighbor.first);
         
-        m_residualGraph.channels[key] = channelInfo;
-        
-        NS_LOG_LOGIC ("Added channel " << myAddress << " -> " << neighbor.first
-                      << " with capacity=" << channelInfo.availableEPRCapacity
-                      << ", cost=" << channelInfo.cost);
+        // Check if both nodes are in the graph
+        if (m_residualGraph.nodes.find (myAddress) != m_residualGraph.nodes.end () &&
+            m_residualGraph.nodes.find (neighbor.first) != m_residualGraph.nodes.end ())
+        {
+          ResidualChannelInfo channelInfo;
+          channelInfo.src = myAddress;
+          channelInfo.dst = neighbor.first;
+          channelInfo.availableEPRCapacity = m_resourceManager->GetAvailableEPRCapacity (neighbor.second.channel);
+          channelInfo.cost = m_metric ? m_metric->CalculateChannelCost (neighbor.second.channel) : 1.0;
+          
+          m_residualGraph.channels[key] = channelInfo;
+          
+          NS_LOG_LOGIC ("Added channel " << myAddress << " -> " << neighbor.first
+                        << " with capacity=" << channelInfo.availableEPRCapacity
+                        << ", cost=" << channelInfo.cost);
+        }
       }
     }
   }
-  
-  // If using global topology, we might want to add estimated channels for non-neighbor connections
-  // This would require maintaining a global channel map, which is more complex
-  // For now, we only add actual channels we have objects for
   
   NS_LOG_LOGIC ("Residual network graph built with " 
                 << m_residualGraph.nodes.size () << " nodes and "
@@ -262,7 +325,7 @@ QCastRoutingProtocol::GreedyExtendedDijkstra (const std::string& src,
         dist[neighborAddr] = alt;
         prev[neighborAddr] = current;
         
-        // Find actual quantum channel object
+        // Find actual quantum channel object if this is a direct neighbor
         for (const auto& neighbor : m_neighbors)
         {
           if (neighbor.first == neighborAddr)
@@ -287,15 +350,13 @@ QCastRoutingProtocol::GreedyExtendedDijkstra (const std::string& src,
   route.destination = dst;
   route.totalCost = dist[dst];
   
-  // Backtrack to build path
+  // Backtrack to build node sequence
+  std::vector<std::string> nodeSeq;
   std::string current = dst;
+  
   while (current != src)
   {
-    auto channelIt = prevChannel.find (current);
-    if (channelIt != prevChannel.end ())
-    {
-      route.path.insert (route.path.begin (), channelIt->second);
-    }
+    nodeSeq.insert (nodeSeq.begin (), current);
     
     auto prevIt = prev.find (current);
     if (prevIt == prev.end ())
@@ -303,22 +364,91 @@ QCastRoutingProtocol::GreedyExtendedDijkstra (const std::string& src,
     
     current = prevIt->second;
   }
+  nodeSeq.insert (nodeSeq.begin (), src);
+  route.nodeSequence = nodeSeq;
   
-  // Estimate fidelity and delay
+  NS_LOG_INFO ("G-EDA path: ");
+  for (size_t i = 0; i < nodeSeq.size (); ++i)
+  {
+    NS_LOG_INFO ("  " << i << ": " << nodeSeq[i]);
+  }
+  
+  // Build channel path for direct neighbors
+  // For multi-hop routes, we only add channels we have direct access to
+  for (size_t i = 0; i < nodeSeq.size () - 1; ++i)
+  {
+    std::string fromNode = nodeSeq[i];
+    std::string toNode = nodeSeq[i + 1];
+    
+    // Check if we have a direct channel to this node
+    auto channelIt = prevChannel.find (toNode);
+    if (channelIt != prevChannel.end () && channelIt->second)
+    {
+      route.path.push_back (channelIt->second);
+    }
+  }
+  
+  // Calculate fidelity using actual channel fidelities from physics layer
+  size_t hopCount = nodeSeq.size () - 1;
   route.estimatedFidelity = 1.0;
   route.estimatedDelay = Seconds (0.0);
-  for (const auto& channel : route.path)
+  
+  // Get QuantumPhyEntity from network layer if available
+  Ptr<QuantumPhyEntity> qphyent = nullptr;
+  if (m_networkLayer)
   {
-    // Simplified estimation: path fidelity = product(channel fidelity)
-    route.estimatedFidelity *= 0.95;  // Assume each channel has fidelity 0.95
-    route.estimatedDelay += Seconds (0.01);  // Assume each channel has 10ms delay
+    Ptr<QuantumNode> qnode = m_networkLayer->GetQuantumNode ();
+    if (qnode)
+    {
+      qphyent = qnode->GetQuantumPhyEntity ();
+    }
+  }
+  
+  // Calculate path fidelity as product of channel fidelities
+  for (size_t i = 0; i < nodeSeq.size () - 1; ++i)
+  {
+    std::string fromNode = nodeSeq[i];
+    std::string toNode = nodeSeq[i + 1];
+    
+    double channelFidelity = 0.95;  // Default fidelity
+    
+    // Try to get actual fidelity from direct neighbor channel
+    auto neighborIt = m_neighbors.find (toNode);
+    if (neighborIt != m_neighbors.end () && neighborIt->second.channel && qphyent)
+    {
+      // Use actual channel fidelity from physics layer
+      channelFidelity = neighborIt->second.channel->GetFidelity (qphyent);
+      NS_LOG_LOGIC ("Using actual fidelity " << channelFidelity << " for channel " << fromNode << " -> " << toNode);
+    }
+    else
+    {
+      // Use estimated fidelity from global topology link metrics
+      auto lsaIt = m_globalTopology.lsaDatabase.find (fromNode);
+      if (lsaIt != m_globalTopology.lsaDatabase.end ())
+      {
+        const TopologyLSA& lsa = lsaIt->second;
+        for (size_t j = 0; j < lsa.neighbors.size (); ++j)
+        {
+          if (lsa.neighbors[j] == toNode && j < lsa.linkMetrics.size ())
+          {
+            channelFidelity = lsa.linkMetrics[j];
+            NS_LOG_LOGIC ("Using LSA fidelity " << channelFidelity << " for channel " << fromNode << " -> " << toNode);
+            break;
+          }
+        }
+      }
+    }
+    
+    route.estimatedFidelity *= channelFidelity;
+    route.estimatedDelay += Seconds (0.01);  // 10ms per hop
   }
   
   route.strategy = requirements.strategy;
   route.expirationTime = Simulator::Now () + requirements.duration;
   route.routeId = m_stats.routeRequests + 1;
   
-  NS_LOG_LOGIC ("G-EDA found path with " << route.path.size () << " hops, cost=" << route.totalCost);
+  NS_LOG_INFO ("G-EDA found path with " << hopCount << " hops, cost=" << route.totalCost
+               << ", fidelity=" << route.estimatedFidelity << " (calculated from channel fidelities)");
   
   return route;
 }
@@ -787,29 +917,62 @@ QCastRoutingProtocol::ReceivePacket (Ptr<QuantumPacket> packet)
   // Process topology LSA packets
   if (packet->GetType () == QuantumPacket::TOPOLOGY_LSA)
   {
-    NS_LOG_LOGIC ("Processing topology LSA packet from " << packet->GetSourceAddress ());
+    NS_LOG_INFO ("QCastRoutingProtocol::ReceivePacket - Processing topology LSA packet from " << packet->GetSourceAddress () << 
+                 " to " << packet->GetDestinationAddress () << 
+                 " type=" << (int)packet->GetType () << 
+                 " protocol=" << (int)packet->GetProtocol ());
     ProcessTopologyLSA (packet);
   }
 }
 
 void
-QCastRoutingProtocol::SendPacket (Ptr<QuantumPacket> packet, const std::string& dst)
+QCastRoutingProtocol::InitiateTopologyDiscovery ()
 {
-  NS_LOG_LOGIC ("QCastRoutingProtocol::SendPacket");
+  NS_LOG_LOGIC ("Initiating topology discovery");
   
-  if (!packet || !m_networkLayer)
+  if (!m_networkLayer)
   {
-    NS_LOG_WARN ("Cannot send packet: null packet or no network layer");
+    NS_LOG_WARN ("No network layer set for topology discovery");
     return;
   }
   
+  // Generate initial LSA
+  GenerateTopologyLSA ();
+  
+  // Schedule periodic LSA flooding
+  // For now, just do one-time flooding
+  NS_LOG_LOGIC ("Topology discovery initiated");
+  
+  // Schedule convergence check
+  Simulator::Schedule (m_topologyDiscoveryInterval, 
+                      &QCastRoutingProtocol::CheckTopologyConvergence, 
+                      this);
+}
+
+void
+QCastRoutingProtocol::SendPacket(Ptr<QuantumPacket> packet, const std::string& dst)
+{
   m_stats.packetsSent++;
   
   // Set protocol type
   packet->SetProtocol (QuantumPacket::PROTO_QUANTUM_ROUTING);
   
+  NS_LOG_INFO ("QCastRoutingProtocol::SendPacket - Sending packet to " << dst << 
+               ", type=" << (int)packet->GetType () << 
+               ", src=" << packet->GetSourceAddress () << 
+               ", dst=" << packet->GetDestinationAddress ());
+  
   // Send through network layer
-  m_networkLayer->SendPacket (packet);
+  bool sent = m_networkLayer->SendPacket (packet);
+  
+  if (sent)
+  {
+    NS_LOG_INFO ("QCastRoutingProtocol::SendPacket - Packet sent successfully");
+  }
+  else
+  {
+    NS_LOG_WARN ("QCastRoutingProtocol::SendPacket - Failed to send packet");
+  }
 }
 
 QuantumNetworkStats
@@ -887,25 +1050,7 @@ QCastRoutingProtocol::GetQCastRouteInfo (uint32_t routeId) const
 // Topology discovery implementation
 // ===========================================================================
 
-void
-QCastRoutingProtocol::InitiateTopologyDiscovery ()
-{
-  NS_LOG_LOGIC ("Initiating topology discovery");
-  
-  // Reset topology convergence flag
-  m_topologyConverged = false;
-  
-  // Clear previous topology information
-  m_globalTopology = GlobalTopology ();
-  m_receivedSequenceNumbers.clear ();
-  
-  // Generate and flood initial LSA
-  GenerateTopologyLSA ();
-  
-  // Schedule topology convergence check
-  Simulator::Schedule (m_topologyDiscoveryInterval, 
-                      &QCastRoutingProtocol::CheckTopologyConvergence, this);
-}
+
 
 void
 QCastRoutingProtocol::GenerateTopologyLSA ()
@@ -917,6 +1062,17 @@ QCastRoutingProtocol::GenerateTopologyLSA ()
   }
   
   std::string myAddress = m_networkLayer->GetAddress ();
+  
+  // Get QuantumPhyEntity for fidelity queries
+  Ptr<QuantumPhyEntity> qphyent = nullptr;
+  if (m_networkLayer)
+  {
+    Ptr<QuantumNode> qnode = m_networkLayer->GetQuantumNode ();
+    if (qnode)
+    {
+      qphyent = qnode->GetQuantumPhyEntity ();
+    }
+  }
   
   // Create LSA
   TopologyLSA lsa;
@@ -931,11 +1087,12 @@ QCastRoutingProtocol::GenerateTopologyLSA ()
     
     // Get link metric (fidelity from channel or default)
     double linkFidelity = 0.95; // Default
-    if (neighbor.second.channel)
+    if (neighbor.second.channel && qphyent)
     {
-      // Try to get actual fidelity from channel
-      // For now, use default
-      linkFidelity = 0.95;
+      // Get actual fidelity from physics layer via channel
+      linkFidelity = neighbor.second.channel->GetFidelity (qphyent);
+      NS_LOG_LOGIC ("LSA: Using actual fidelity " << linkFidelity 
+                    << " for link " << myAddress << " -> " << neighbor.first);
     }
     lsa.linkMetrics.push_back (linkFidelity);
   }
@@ -961,26 +1118,68 @@ QCastRoutingProtocol::FloodTopologyLSA (const TopologyLSA& lsa)
   }
   
   std::string myAddress = m_networkLayer->GetAddress ();
-  NS_LOG_LOGIC ("Flooding LSA from " << lsa.nodeId << " (seq=" << lsa.sequenceNumber << ")");
+  NS_LOG_INFO ("Flooding LSA from " << lsa.nodeId << " (seq=" << lsa.sequenceNumber << ") to " << m_neighbors.size () << " neighbors");
+  NS_LOG_INFO ("  LSA has " << lsa.neighbors.size () << " neighbors:");
+  for (const auto& n : lsa.neighbors)
+  {
+    NS_LOG_INFO ("    - " << n);
+  }
   
   // Create a packet for each neighbor
   for (const auto& neighbor : m_neighbors)
   {
+    std::string neighborAddr = neighbor.first;
+    const NeighborInfo& info = neighbor.second;
+    
+    // Check if we have a valid channel to this neighbor
+    if (!info.channel)
+    {
+      NS_LOG_WARN ("No channel available for neighbor " << neighborAddr);
+      continue;
+    }
+    
     // Create quantum packet with source = myAddress, destination = neighbor address
-    Ptr<QuantumPacket> packet = CreateObject<QuantumPacket> (myAddress, neighbor.first);
+    Ptr<QuantumPacket> packet = CreateObject<QuantumPacket> (myAddress, neighborAddr);
+    
+    // Explicitly set addresses
+    packet->SetSourceAddress (myAddress);
+    packet->SetDestinationAddress (neighborAddr);
     
     // Set packet type and protocol
     packet->SetType (QuantumPacket::TOPOLOGY_LSA);
     packet->SetProtocol (QuantumPacket::PROTO_QUANTUM_ROUTING);
     
-    // Set sequence number (optional)
+    // Set sequence number from LSA
     packet->SetSequenceNumber (lsa.sequenceNumber);
     
-    // In a real implementation, we would serialize LSA to classical payload
-    // For now, we'll send empty payload; ProcessTopologyLSA will use dummy LSA
+    // Store LSA data in qubit references:
+    // - First entry: original LSA node ID (the node that generated this LSA)
+    // - Remaining entries: neighbor list of the original node
+    std::vector<std::string> lsaData;
+    lsaData.push_back (lsa.nodeId);  // Original LSA source node
+    for (const auto& n : lsa.neighbors)
+    {
+      lsaData.push_back (n);
+    }
+    packet->SetQubitReferences (lsaData);
     
-    NS_LOG_LOGIC ("Sending topology LSA to neighbor: " << neighbor.first);
-    SendPacket (packet, neighbor.first);
+    // Create a simple route with just this channel
+    QuantumRoute route;
+    route.source = myAddress;
+    route.destination = neighborAddr;
+    route.path.push_back (info.channel);
+    route.totalCost = info.cost;
+    route.estimatedFidelity = 0.95;
+    route.estimatedDelay = MilliSeconds (10);
+    route.strategy = QFS_ON_DEMAND;
+    route.expirationTime = Simulator::Now () + Seconds (30);
+    
+    packet->SetRoute (route);
+    
+    NS_LOG_INFO ("Sending topology LSA to neighbor: " << neighborAddr << 
+                 ", original LSA node: " << lsa.nodeId << 
+                 ", seq=" << lsa.sequenceNumber);
+    SendPacket (packet, neighborAddr);
   }
 }
 
@@ -993,85 +1192,118 @@ QCastRoutingProtocol::ProcessTopologyLSA (Ptr<QuantumPacket> packet)
     return;
   }
   
-  // In a real implementation, we would:
-  // 1. Parse LSA from packet payload
-  // 2. Check sequence number
-  // 3. Update global topology
-  // 4. Re-flood if newer
+  std::string senderAddr = packet->GetSourceAddress ();  // Who sent this packet
+  std::string myAddress = m_networkLayer ? m_networkLayer->GetAddress () : "";
   
-  NS_LOG_LOGIC ("Processing topology LSA packet from " << packet->GetSourceAddress ());
+  // Extract LSA data from qubit references
+  // Format: [originalNodeId, neighbor1, neighbor2, ...]
+  std::vector<std::string> lsaData = packet->GetQubitReferences ();
   
-  // For now, simulate processing by updating with dummy LSA
-  std::string sourceAddr = packet->GetSourceAddress ();
+  std::string originalLsaNode;
+  std::vector<std::string> lsaNeighbors;
   
-  // Check if we have newer sequence number
-  auto seqIt = m_receivedSequenceNumbers.find (sourceAddr);
-  uint32_t currentSeq = (seqIt != m_receivedSequenceNumbers.end ()) ? seqIt->second : 0;
-  
-  // Assume packet contains LSA with sequence number = currentSeq + 1
-  uint32_t newSeq = currentSeq + 1;
-  
-  // Create dummy LSA for simulation
-  TopologyLSA dummyLsa;
-  dummyLsa.nodeId = sourceAddr;
-  dummyLsa.sequenceNumber = newSeq;
-  dummyLsa.timestamp = Simulator::Now ();
-  
-  // Add dummy neighbors (in real implementation, parse from packet)
-  // For now, create chain topology for NodeA-NodeE (as used in example)
-  if (sourceAddr == "NodeA")
+  if (!lsaData.empty ())
   {
-    dummyLsa.neighbors = {"NodeB"};
-    dummyLsa.linkMetrics = {0.95};
-  }
-  else if (sourceAddr == "NodeB")
-  {
-    dummyLsa.neighbors = {"NodeA", "NodeC"};
-    dummyLsa.linkMetrics = {0.95, 0.95};
-  }
-  else if (sourceAddr == "NodeC")
-  {
-    dummyLsa.neighbors = {"NodeB", "NodeD"};
-    dummyLsa.linkMetrics = {0.95, 0.95};
-  }
-  else if (sourceAddr == "NodeD")
-  {
-    dummyLsa.neighbors = {"NodeC", "NodeE"};
-    dummyLsa.linkMetrics = {0.95, 0.95};
-  }
-  else if (sourceAddr == "NodeE")
-  {
-    dummyLsa.neighbors = {"NodeD"};
-    dummyLsa.linkMetrics = {0.95};
-  }
-  else if (sourceAddr == "Node0")
-  {
-    dummyLsa.neighbors = {"Node1"};
-    dummyLsa.linkMetrics = {0.95};
-  }
-  else if (sourceAddr == "Node1")
-  {
-    dummyLsa.neighbors = {"Node0", "Node2"};
-    dummyLsa.linkMetrics = {0.95, 0.92};
-  }
-  else if (sourceAddr == "Node2")
-  {
-    dummyLsa.neighbors = {"Node1"};
-    dummyLsa.linkMetrics = {0.92};
+    originalLsaNode = lsaData[0];
+    for (size_t i = 1; i < lsaData.size (); ++i)
+    {
+      lsaNeighbors.push_back (lsaData[i]);
+    }
   }
   else
   {
-    // Generic fallback: assume node has no neighbors
-    dummyLsa.neighbors = {};
-    dummyLsa.linkMetrics = {};
+    // Fallback: use sender as the LSA source (old behavior)
+    originalLsaNode = senderAddr;
+    NS_LOG_WARN ("No LSA data in packet, using sender as LSA source");
+  }
+  
+  NS_LOG_INFO ("Processing topology LSA: sender=" << senderAddr << 
+               ", originalNode=" << originalLsaNode << 
+               ", neighbors=" << lsaNeighbors.size () << 
+               ", seq=" << packet->GetSequenceNumber ());
+  
+  // Get sequence number from packet
+  uint32_t packetSeq = packet->GetSequenceNumber ();
+  
+  // Check if we have newer sequence number for the ORIGINAL LSA node
+  auto seqIt = m_receivedSequenceNumbers.find (originalLsaNode);
+  uint32_t currentSeq = (seqIt != m_receivedSequenceNumbers.end ()) ? seqIt->second : 0;
+  
+  // If this LSA is not newer than what we already have, ignore it
+  if (packetSeq <= currentSeq)
+  {
+    NS_LOG_LOGIC ("Ignoring old LSA from " << originalLsaNode << " seq=" << packetSeq << " (current seq=" << currentSeq << ")");
+    return;
+  }
+  
+  // Create LSA from packet data
+  TopologyLSA lsa;
+  lsa.nodeId = originalLsaNode;
+  lsa.sequenceNumber = packetSeq;
+  lsa.timestamp = Simulator::Now ();
+  lsa.neighbors = lsaNeighbors;
+  lsa.linkMetrics = std::vector<double> (lsaNeighbors.size (), 0.95);
+  
+  NS_LOG_INFO ("LSA from " << originalLsaNode << " has neighbors:");
+  for (const auto& n : lsa.neighbors)
+  {
+    NS_LOG_INFO ("  - " << n);
   }
   
   // Update global topology
-  m_globalTopology.UpdateFromLSA (dummyLsa);
-  m_receivedSequenceNumbers[sourceAddr] = newSeq;
+  m_globalTopology.UpdateFromLSA (lsa);
+  m_receivedSequenceNumbers[originalLsaNode] = packetSeq;
   
-  NS_LOG_LOGIC ("Updated topology with LSA from " << sourceAddr 
-                << " (seq=" << newSeq << "), total nodes: " << m_globalTopology.GetNodeCount ());
+  NS_LOG_INFO ("Updated topology with LSA from " << originalLsaNode 
+                << " (seq=" << packetSeq << "), total nodes: " << m_globalTopology.GetNodeCount ());
+  
+  // Check if topology has converged
+  CheckTopologyConvergence ();
+  
+  // Re-flood the LSA to other neighbors (except the one we received it from)
+  // Note: we keep the original LSA data intact
+  NS_LOG_INFO ("Re-flooding LSA from " << originalLsaNode << " to other neighbors (except " << senderAddr << ")");
+  
+  for (const auto& neighbor : m_neighbors)
+  {
+    std::string neighborAddr = neighbor.first;
+    
+    // Don't send back to the node we received from
+    if (neighborAddr == senderAddr)
+      continue;
+    
+    // Don't send to the original LSA node
+    if (neighborAddr == originalLsaNode)
+      continue;
+    
+    // Create new packet with the same LSA data
+    Ptr<QuantumPacket> floodPacket = CreateObject<QuantumPacket> (myAddress, neighborAddr);
+    floodPacket->SetSourceAddress (myAddress);
+    floodPacket->SetDestinationAddress (neighborAddr);
+    floodPacket->SetType (QuantumPacket::TOPOLOGY_LSA);
+    floodPacket->SetProtocol (QuantumPacket::PROTO_QUANTUM_ROUTING);
+    floodPacket->SetSequenceNumber (packetSeq);
+    
+    // Keep the original LSA data (originalNodeId + neighbors)
+    floodPacket->SetQubitReferences (lsaData);
+    
+    // Create a simple route
+    QuantumRoute route;
+    route.source = myAddress;
+    route.destination = neighborAddr;
+    route.path.push_back (neighbor.second.channel);
+    route.totalCost = neighbor.second.cost;
+    route.estimatedFidelity = 0.95;
+    route.estimatedDelay = MilliSeconds (10);
+    route.strategy = QFS_ON_DEMAND;
+    route.expirationTime = Simulator::Now () + Seconds (30);
+    
+    floodPacket->SetRoute (route);
+    
+    // Send the packet
+    NS_LOG_INFO ("Forwarding LSA (from " << originalLsaNode << ") to neighbor: " << neighborAddr);
+    SendPacket (floodPacket, neighborAddr);
+  }
 }
 
 void
@@ -1111,28 +1343,138 @@ QCastRoutingProtocol::HandleTopologyConverged ()
   // This enables multi-hop path finding
 }
 
-Ptr<QuantumChannel>
-QCastRoutingProtocol::FindChannel (const std::string& src, const std::string& dst) const
+void
+QCastRoutingProtocol::SimulateTopologyExchange (const std::vector<Ptr<QuantumNetworkLayer>>& allLayers)
 {
-  // Search in neighbor channels
-  for (const auto& neighbor : m_neighbors)
+  NS_LOG_INFO ("Simulating topology exchange between " << allLayers.size () << " nodes");
+  
+  // This is a simplified simulation approach
+  // In a real implementation, this would use actual packet transmission
+  
+  // Collect all LSAs from all nodes
+  std::vector<TopologyLSA> allLsas;
+  
+  for (const auto& layer : allLayers)
   {
-    Ptr<QuantumChannel> channel = neighbor.second.channel;
-    if (channel)
+    if (!layer)
+      continue;
+      
+    std::string nodeId = layer->GetAddress ();
+    
+    // Generate LSA for this node based on its neighbors
+    TopologyLSA lsa;
+    lsa.nodeId = nodeId;
+    lsa.sequenceNumber = 1;
+    lsa.timestamp = Simulator::Now ();
+    
+    // Get neighbors from the network layer
+    std::vector<Ptr<QuantumChannel>> channels = layer->GetNeighbors ();
+    for (const auto& channel : channels)
     {
-      if ((channel->GetSrcOwner () == src && channel->GetDstOwner () == dst) ||
-          (channel->GetSrcOwner () == dst && channel->GetDstOwner () == src))
+      std::string neighborId = (channel->GetSrcOwner () != nodeId) ? 
+                               channel->GetSrcOwner () : channel->GetDstOwner ();
+      lsa.neighbors.push_back (neighborId);
+      lsa.linkMetrics.push_back (0.95); // Default link quality
+    }
+    
+    allLsas.push_back (lsa);
+    NS_LOG_INFO ("Generated LSA for node " << nodeId << " with " << lsa.neighbors.size () << " neighbors");
+  }
+  
+  // Now distribute all LSAs to all nodes
+  for (const auto& layer : allLayers)
+  {
+    if (!layer)
+      continue;
+      
+    // Get the routing protocol for this layer
+    Ptr<QuantumRoutingProtocol> routingProto = layer->GetRoutingProtocol ();
+    if (!routingProto)
+      continue;
+      
+    // Try to cast to QCastRoutingProtocol
+    Ptr<QCastRoutingProtocol> qcastProto = DynamicCast<QCastRoutingProtocol> (routingProto);
+    if (!qcastProto)
+      continue;
+      
+    // Process all LSAs
+    for (const auto& lsa : allLsas)
+    {
+      // Skip our own LSA (we already have it)
+      if (lsa.nodeId == layer->GetAddress ())
+        continue;
+        
+      // Update topology with this LSA
+      qcastProto->m_globalTopology.UpdateFromLSA (lsa);
+      qcastProto->m_receivedSequenceNumbers[lsa.nodeId] = lsa.sequenceNumber;
+      
+      NS_LOG_INFO ("Node " << layer->GetAddress () << " received LSA from " << lsa.nodeId);
+    }
+    
+      // Check if topology has converged
+      qcastProto->CheckTopologyConvergence ();
+  }
+}
+
+void
+QCastRoutingProtocol::PrintRoutingTable () const
+{
+  NS_LOG_INFO ("");
+  NS_LOG_INFO ("=== Routing Table for Node " << (m_networkLayer ? m_networkLayer->GetAddress () : "unknown") << " ===");
+  
+  if (m_routingTable.empty ())
+  {
+    NS_LOG_INFO ("  No routes in routing table");
+  }
+  else
+  {
+    for (size_t i = 0; i < m_routingTable.size (); ++i)
+    {
+      const QuantumRouteEntry& entry = m_routingTable[i];
+      NS_LOG_INFO ("  " << i << ". Destination: " << entry.destination);
+      NS_LOG_INFO ("     Next hop: " << entry.nextHop);
+      NS_LOG_INFO ("     Cost: " << entry.cost);
+      NS_LOG_INFO ("     Timestamp: " << entry.timestamp.GetSeconds () << "s");
+      NS_LOG_INFO ("     Sequence: " << entry.sequenceNumber);
+      if (entry.channel)
       {
-        return channel;
+        NS_LOG_INFO ("     Channel: " << entry.channel->GetSrcOwner () << " -> " << entry.channel->GetDstOwner ());
       }
     }
   }
   
-  // Not found in direct neighbors
-  // In a real implementation with global topology, we might need to
-  // maintain a map of all channels in the network
-  
-  return nullptr;
+  NS_LOG_INFO ("=== End Routing Table ===");
+  NS_LOG_INFO ("");
 }
 
+void
+QCastRoutingProtocol::PrintGlobalTopology () const
+{
+  NS_LOG_INFO ("");
+  NS_LOG_INFO ("=== Global Topology for Node " << (m_networkLayer ? m_networkLayer->GetAddress () : "unknown") << " ===");
+  
+  NS_LOG_INFO ("  Total nodes: " << m_globalTopology.GetNodeCount ());
+  NS_LOG_INFO ("  Topology converged: " << (m_topologyConverged ? "Yes" : "No"));
+  
+  if (!m_globalTopology.allNodes.empty ())
+  {
+    NS_LOG_INFO ("  Nodes in topology:");
+    for (const auto& node : m_globalTopology.allNodes)
+    {
+      NS_LOG_INFO ("    - " << node);
+    }
+    
+    NS_LOG_INFO ("  Connections:");
+    for (const auto& conn : m_globalTopology.connections)
+    {
+      if (conn.second)  // Connection exists
+      {
+        NS_LOG_INFO ("    " << conn.first.first << " <-> " << conn.first.second);
+      }
+    }
+  }
+  
+  NS_LOG_INFO ("=== End Global Topology ===");
+  NS_LOG_INFO ("");
+}
 } // namespace ns3

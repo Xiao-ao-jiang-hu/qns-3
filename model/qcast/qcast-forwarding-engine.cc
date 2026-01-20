@@ -23,6 +23,9 @@ NS_LOG_COMPONENT_DEFINE ("QCastForwardingEngine");
 // QCastForwardingEngine implementation
 // ===========================================================================
 
+// Static member initialization
+std::map<std::string, Ptr<QuantumNetworkLayer>> QCastForwardingEngine::s_networkLayerRegistry;
+
 QCastForwardingEngine::QCastForwardingEngine ()
   : m_strategy (QFS_ON_DEMAND),
     m_nextRouteId (1)
@@ -124,7 +127,7 @@ QCastForwardingEngine::LogTimeSwapScheduling (const QuantumRoute& route)
 bool
 QCastForwardingEngine::ForwardPacket (Ptr<QuantumPacket> packet)
 {
-  NS_LOG_LOGIC ("QCastForwardingEngine::ForwardPacket");
+  NS_LOG_INFO ("[FORWARD] QCastForwardingEngine::ForwardPacket");
   
   if (!packet)
   {
@@ -132,13 +135,86 @@ QCastForwardingEngine::ForwardPacket (Ptr<QuantumPacket> packet)
     return false;
   }
   
+  NS_LOG_INFO ("[FORWARD] Packet source: " << packet->GetSourceAddress() << " dest: " << packet->GetDestinationAddress());
+  NS_LOG_INFO ("[FORWARD] Packet type: " << (int)packet->GetType() << " protocol: " << (int)packet->GetProtocol());
+  
   m_stats.packetsForwarded++;
+  
+  // Special handling for routing protocol packets - deliver directly via registry
+  if (packet->GetProtocol () == QuantumPacket::PROTO_QUANTUM_ROUTING)
+  {
+    NS_LOG_INFO ("[FORWARD] Routing protocol packet detected, using registry delivery");
+    NS_LOG_INFO ("  Packet type: " << (int)packet->GetType ());
+    NS_LOG_INFO ("  Source: " << packet->GetSourceAddress ());
+    NS_LOG_INFO ("  Destination: " << packet->GetDestinationAddress ());
+    
+    // Use network layer registry to deliver packet to destination
+    std::string dstAddr = packet->GetDestinationAddress ();
+    NS_LOG_INFO ("[FORWARD] Routing packet destination address: " << dstAddr);
+    Ptr<QuantumNetworkLayer> dstNetworkLayer = GetNetworkLayer (dstAddr);
+    
+    if (dstNetworkLayer)
+    {
+      NS_LOG_INFO ("[FORWARD] Found network layer for destination: " << dstAddr);
+      NS_LOG_INFO ("[FORWARD] Delivering packet to destination network layer");
+      
+      // Deliver packet to destination's network layer
+      // This will trigger ProcessPacket -> ReceivePacket on the routing protocol
+      dstNetworkLayer->ReceivePacket (packet);
+      NS_LOG_INFO ("[FORWARD] ReceivePacket called successfully");
+      
+      NS_LOG_INFO ("[FORWARD] Packet delivered successfully to " << dstAddr);
+      return true;
+    }
+    else
+    {
+      NS_LOG_WARN ("[FORWARD] No network layer found for destination: " << dstAddr);
+      NS_LOG_WARN ("[FORWARD] Packet delivery failed");
+      return false;
+    }
+  }
   
   // Check if packet has valid route
   if (!packet->GetRoute ().IsValid ())
   {
-    NS_LOG_WARN ("Packet has no valid route");
-    return false;
+    // For routing protocol packets (like topology LSA), allow forwarding even without route
+    if (packet->GetProtocol () == QuantumPacket::PROTO_QUANTUM_ROUTING)
+    {
+      NS_LOG_INFO ("QCastForwardingEngine::ForwardPacket - Routing protocol packet without route");
+      NS_LOG_INFO ("  Packet type: " << (int)packet->GetType ());
+      NS_LOG_INFO ("  Source: " << packet->GetSourceAddress ());
+      NS_LOG_INFO ("  Destination: " << packet->GetDestinationAddress ());
+      
+      // Use network layer registry to deliver packet to destination
+      std::string dstAddr = packet->GetDestinationAddress ();
+      NS_LOG_INFO ("[FORWARD] Routing packet destination address: " << dstAddr);
+      Ptr<QuantumNetworkLayer> dstNetworkLayer = GetNetworkLayer (dstAddr);
+      
+      if (dstNetworkLayer)
+      {
+        NS_LOG_INFO ("[FORWARD] Found network layer for destination: " << dstAddr);
+        NS_LOG_INFO ("[FORWARD] Delivering packet to destination network layer");
+        
+        // Deliver packet to destination's network layer
+        // This will trigger ProcessPacket -> ReceivePacket on the routing protocol
+        dstNetworkLayer->ReceivePacket (packet);
+        NS_LOG_INFO ("[FORWARD] ReceivePacket called successfully");
+        
+        NS_LOG_INFO ("[FORWARD] Packet delivered successfully to " << dstAddr);
+        return true;
+      }
+      else
+      {
+        NS_LOG_WARN ("[FORWARD] No network layer found for destination: " << dstAddr);
+        NS_LOG_WARN ("[FORWARD] Packet delivery failed");
+        return false;
+      }
+    }
+    else
+    {
+      NS_LOG_WARN ("Packet has no valid route");
+      return false;
+    }
   }
   
   const QuantumRoute& route = packet->GetRoute ();
@@ -315,6 +391,52 @@ QCastForwardingEngine::SetForwardingStrategy (QuantumForwardingStrategy strategy
 {
   m_strategy = strategy;
   NS_LOG_LOGIC ("Set forwarding strategy to " << (int)strategy);
+}
+
+// ===========================================================================
+// Network layer registry implementation
+// ===========================================================================
+
+void
+QCastForwardingEngine::RegisterNetworkLayer (const std::string& address, Ptr<QuantumNetworkLayer> layer)
+{
+  NS_LOG_INFO ("[REGISTRY] Registering network layer for address: " << address << " (ptr: " << layer << ")");
+  s_networkLayerRegistry[address] = layer;
+  NS_LOG_INFO ("[REGISTRY] Total registered layers: " << s_networkLayerRegistry.size());
+}
+
+void
+QCastForwardingEngine::UnregisterNetworkLayer (const std::string& address)
+{
+  NS_LOG_LOGIC ("Unregistering network layer for address: " << address);
+  auto it = s_networkLayerRegistry.find (address);
+  if (it != s_networkLayerRegistry.end ())
+  {
+    s_networkLayerRegistry.erase (it);
+  }
+}
+
+Ptr<QuantumNetworkLayer>
+QCastForwardingEngine::GetNetworkLayer (const std::string& address)
+{
+  NS_LOG_INFO ("[REGISTRY] Looking up network layer for address: " << address);
+  NS_LOG_INFO ("[REGISTRY] Total registered layers: " << s_networkLayerRegistry.size());
+  
+  // Log all registered addresses for debugging
+  for (const auto& entry : s_networkLayerRegistry)
+  {
+    NS_LOG_INFO ("[REGISTRY]   Registered: " << entry.first << " -> " << entry.second);
+  }
+  
+  auto it = s_networkLayerRegistry.find (address);
+  if (it != s_networkLayerRegistry.end ())
+  {
+    NS_LOG_INFO ("[REGISTRY] Found network layer for address: " << address);
+    return it->second;
+  }
+  
+  NS_LOG_WARN ("[REGISTRY] Network layer not found for address: " << address);
+  return nullptr;
 }
 
 void

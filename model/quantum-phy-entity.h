@@ -238,6 +238,14 @@ public:
       std::pair<std::string, std::string> conn,
       double fidel
   );
+  
+  /**
+   * \brief Get the fidelity of a connection.
+   * \param conn The two owners of the connection.
+   * \return Fidelity of the connection (default 0.95 if not set).
+   */
+  double GetConnectionFidelity (std::pair<std::string, std::string> conn) const;
+  
   /**
    * \brief Apply a depolarizing model for some EPR distribution.
    * \param conn The two owners distributing the EPR pair.

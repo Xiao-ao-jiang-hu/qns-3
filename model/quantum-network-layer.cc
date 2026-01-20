@@ -409,13 +409,25 @@ void QuantumNetworkLayer::SetNeighborRemovedCallback(NeighborRemovedCallback cb)
 // 私有方法实现
 bool QuantumNetworkLayer::ProcessPacket(Ptr<QuantumPacket> packet)
 {
-  // 简化处理逻辑：
+  // 处理逻辑：
   // 1. 如果是路由协议包，交给路由协议处理
   // 2. 如果是数据包，检查目的地
   // 3. 如果目的地是本节点，传递给上层
   // 4. 否则，尝试转发
   
   if (!packet) return false;
+  
+  // 首先检查是否是路由协议包
+  uint8_t protocol = packet->GetProtocol();
+  if (protocol == QuantumPacket::PROTO_QUANTUM_ROUTING && m_routingProtocol)
+  {
+    NS_LOG_INFO("Routing protocol packet received at " << m_address << 
+                ", type=" << (int)packet->GetType() << 
+                ", src=" << packet->GetSourceAddress() << 
+                ", dst=" << packet->GetDestinationAddress());
+    m_routingProtocol->ReceivePacket(packet);
+    return true;
+  }
   
   std::string dstAddr = packet->GetDestinationAddress();
   

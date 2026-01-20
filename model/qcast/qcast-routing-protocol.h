@@ -76,6 +76,22 @@ public:
    */
   QCastRouteInfo GetQCastRouteInfo(uint32_t routeId) const;
 
+  /**
+   * \brief Print routing table for debugging
+   */
+  void PrintRoutingTable() const;
+
+  /**
+   * \brief Print global topology for debugging
+   */
+  void PrintGlobalTopology() const;
+
+  /**
+   * \brief Direct topology simulation for testing
+   * \param allLayers Vector of all network layers in the simulation
+   */
+  void SimulateTopologyExchange(const std::vector<Ptr<QuantumNetworkLayer>>& allLayers);
+
 private:
   // Neighbor information structure
   struct NeighborInfo
@@ -98,15 +114,16 @@ private:
                                     const std::vector<QuantumRoute>& recoveryPaths) const;
   void BuildRecoveryRings(QCastRouteInfo& qcastInfo);
   
-  // Topology discovery methods
+// Topology discovery methods
   void InitiateTopologyDiscovery();
   void GenerateTopologyLSA();
   void FloodTopologyLSA(const TopologyLSA& lsa);
   void ProcessTopologyLSA(Ptr<QuantumPacket> packet);
   void CheckTopologyConvergence();
   void HandleTopologyConverged();
-  Ptr<QuantumChannel> FindChannel(const std::string& src, const std::string& dst) const;
+  
 
+  
   // Member variables
   Ptr<QuantumNetworkLayer> m_networkLayer;
   Ptr<QuantumMetric> m_metric;

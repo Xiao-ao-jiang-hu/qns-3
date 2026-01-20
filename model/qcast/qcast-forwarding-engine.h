@@ -3,6 +3,7 @@
 
 #include "../quantum-forwarding-engine.h"
 #include "../quantum-resource-manager.h"
+#include "../quantum-network-layer.h"
 #include "qcast-route-types.h"
 #include <map>
 #include <vector>
@@ -39,8 +40,13 @@ public:
   void SetForwardingStrategy(QuantumForwardingStrategy strategy) override;
   void SetResourceManager(Ptr<QuantumResourceManager> manager) override;
   Ptr<QuantumResourceManager> GetResourceManager() const override;
-  QuantumNetworkStats GetStatistics() const override;
-  void ResetStatistics() override;
+   QuantumNetworkStats GetStatistics() const override;
+   void ResetStatistics() override;
+   
+   // Network layer registry for packet delivery
+   static void RegisterNetworkLayer(const std::string& address, Ptr<QuantumNetworkLayer> layer);
+   static void UnregisterNetworkLayer(const std::string& address);
+   static Ptr<QuantumNetworkLayer> GetNetworkLayer(const std::string& address);
 
 private:
   // Active route state
@@ -58,6 +64,9 @@ private:
                           const std::vector<QuantumRoute>& recoveryPaths,
                           const std::map<uint32_t, std::vector<QuantumRoute>>& recoveryRings);
   void LogTimeSwapScheduling(const QuantumRoute& route);
+  
+   // Network layer registry for packet delivery
+  static std::map<std::string, Ptr<QuantumNetworkLayer>> s_networkLayerRegistry;
 
   // Member variables
   Ptr<QuantumResourceManager> m_resourceManager;
