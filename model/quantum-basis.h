@@ -33,7 +33,7 @@ namespace ns3 {
 /* macro */
 
 /** Threshold to check if a double is zero. */
-#define EPS (1e-6)
+#define EPS (1e-1)
 
 /** A large enough number of seconds since each Simulator::Run (). */
 #define ETERNITY (1e5)

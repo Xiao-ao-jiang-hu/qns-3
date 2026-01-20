@@ -1044,7 +1044,7 @@ UpdateSequence (
     seq.push_back(l);
     seq.push_back(r);
   }
-  for (int i = subcircs[curr_idx].lo; i <= subcircs[curr_idx].hi; ++i) {
+  for (unsigned i = subcircs[curr_idx].lo; i <= subcircs[curr_idx].hi; ++i) {
     seq.push_back(i);
   }
   std::vector<unsigned> delta_seq = AscendSequence(seq);

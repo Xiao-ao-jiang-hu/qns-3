@@ -1,0 +1,675 @@
+/*
+  Example demonstrating quantum network layer functionality.
+  To run this example:
+  NS_LOG="QuantumNetworkLayer=info:QuantumNetworkSimulator=info" ./ns3 run quantum-network-layer-example
+*/
+#include "ns3/quantum-basis.h"
+#include "ns3/quantum-network-simulator.h" // class QuantumNetworkSimulator
+#include "ns3/quantum-phy-entity.h" // class QuantumPhyEntity
+#include "ns3/quantum-node.h" // class QuantumNode
+#include "ns3/quantum-channel.h" // class QuantumChannel
+#include "ns3/quantum-net-stack-helper.h" // class QuantumNetStackHelper
+#include "ns3/quantum-network-layer.h"
+#include "ns3/quantum-packet.h"
+#include "ns3/quantum-metric.h"
+#include "ns3/quantum-resource-manager.h"
+#include "ns3/quantum-forwarding-engine.h"
+#include "ns3/quantum-routing-protocol.h"
+#include "ns3/internet-stack-helper.h"
+#include "ns3/node-container.h"
+
+#include <iostream>
+
+NS_LOG_COMPONENT_DEFINE ("QuantumNetworkLayerExample");
+
+// ===========================================================================
+// 简单路由发现协议 (Simple Discovery Routing Protocol)
+// ===========================================================================
+
+/**
+ * \brief 简单路由发现协议类
+ * 
+ * 实现基于距离矢量的简单路由发现，支持多跳路由。
+ * 当收到路由请求时，如果目的地是直接邻居，则回复；
+ * 否则，转发给所有邻居（除来源外）。
+ */
+class SimpleDiscoveryRoutingProtocol : public ns3::QuantumRoutingProtocol
+{
+public:
+  SimpleDiscoveryRoutingProtocol()
+    : m_routeExpirationTimeout(ns3::Seconds(30.0)),
+      m_sequenceNumber(1)
+  {
+    NS_LOG_LOGIC("Creating SimpleDiscoveryRoutingProtocol");
+  }
+  
+  ~SimpleDiscoveryRoutingProtocol()
+  {
+    NS_LOG_LOGIC("Destroying SimpleDiscoveryRoutingProtocol");
+  }
+  
+  static ns3::TypeId GetTypeId(void)
+  {
+    static ns3::TypeId tid = ns3::TypeId("ns3::SimpleDiscoveryRoutingProtocol")
+      .SetParent<QuantumRoutingProtocol>()
+      .AddConstructor<SimpleDiscoveryRoutingProtocol>();
+    return tid;
+  }
+  
+  // 核心路由发现方法
+  void DiscoverNeighbors() override
+  {
+    NS_LOG_LOGIC("SimpleDiscoveryRoutingProtocol::DiscoverNeighbors");
+    
+    if (!m_networkLayer)
+    {
+      NS_LOG_WARN("No network layer set for neighbor discovery");
+      return;
+    }
+    
+    // 获取当前邻居通道
+    std::vector<ns3::Ptr<ns3::QuantumChannel>> channels = m_networkLayer->GetNeighbors();
+    
+    // 更新邻居信息
+    for (const auto& channel : channels)
+    {
+      std::string neighborAddr = (channel->GetSrcOwner() != m_networkLayer->GetAddress()) ?
+                                channel->GetSrcOwner() : channel->GetDstOwner();
+      
+      // 添加或更新邻居
+      m_neighbors[neighborAddr] = channel;
+      
+      // 添加直接路由
+      ns3::QuantumRouteEntry entry;
+      entry.destination = neighborAddr;
+      entry.nextHop = neighborAddr;
+      entry.channel = channel;
+      entry.cost = m_metric ? m_metric->CalculateChannelCost(channel) : 1.0;
+      entry.timestamp = ns3::Simulator::Now();
+      entry.sequenceNumber = m_sequenceNumber++;
+      
+      AddRoute(entry);
+      
+      NS_LOG_LOGIC("Discovered neighbor: " << neighborAddr << " with cost " << entry.cost);
+    }
+  }
+  
+  void UpdateRoutingTable() override
+  {
+    NS_LOG_LOGIC("SimpleDiscoveryRoutingProtocol::UpdateRoutingTable");
+    // 简单实现：清理过期路由
+    CleanExpiredRoutes();
+  }
+  
+  ns3::QuantumRoute RouteRequest(const std::string& src, const std::string& dst,
+                               const ns3::QuantumRouteRequirements& requirements) override
+  {
+    NS_LOG_LOGIC("SimpleDiscoveryRoutingProtocol::RouteRequest from " << src << " to " << dst);
+    
+    // 检查是否已有有效路由
+    if (HasRoute(dst))
+    {
+      ns3::QuantumRoute route = GetRoute(dst);
+      if (route.IsValid() && !route.IsExpired())
+      {
+        NS_LOG_LOGIC("Using existing route to " << dst);
+        return route;
+      }
+    }
+    
+    // 发起路由发现
+    NS_LOG_INFO("Initiating route discovery to " << dst);
+    
+    // 创建路由请求包
+    ns3::Ptr<ns3::QuantumPacket> routeRequest = ns3::CreateObject<ns3::QuantumPacket>();
+    routeRequest->SetSourceAddress(src);
+    routeRequest->SetDestinationAddress(dst);
+    routeRequest->SetType(ns3::QuantumPacket::ROUTE_REQUEST);
+    routeRequest->SetProtocol(ns3::QuantumPacket::PROTO_QUANTUM_ROUTING);
+    routeRequest->SetSequenceNumber(m_sequenceNumber++);
+    
+    // 发送路由请求给所有邻居（广播）
+    SendPacket(routeRequest, "");
+    
+    // 简化实现：等待路由回复（实际应使用异步回调）
+    // 这里为了示例简单，直接检查直接邻居
+    for (const auto& neighbor : m_neighbors)
+    {
+      if (neighbor.first == dst)
+      {
+        // 目的地是直接邻居
+        ns3::QuantumRoute route;
+        route.source = src;
+        route.destination = dst;
+        route.path.push_back(neighbor.second);
+        route.totalCost = m_metric ? m_metric->CalculateChannelCost(neighbor.second) : 1.0;
+        route.estimatedFidelity = 1.0 - route.totalCost;
+        route.estimatedDelay = ns3::MilliSeconds(route.totalCost * 1000);
+        route.strategy = requirements.strategy;
+        route.expirationTime = ns3::Simulator::Now() + m_routeExpirationTimeout;
+        route.routeId = m_sequenceNumber++;
+        
+        NS_LOG_INFO("Found direct route to " << dst);
+        return route;
+      }
+    }
+    
+    NS_LOG_WARN("No route found to " << dst << " in this simple implementation");
+    return ns3::QuantumRoute(); // 返回无效路由
+  }
+  
+  ns3::QuantumRoute GetRoute(const std::string& dst) const override
+  {
+    // 在路由表中查找
+    for (const auto& entry : m_routingTable)
+    {
+      if (entry.destination == dst)
+      {
+        // 构建路由
+        ns3::QuantumRoute route;
+        route.source = m_networkLayer ? m_networkLayer->GetAddress() : "";
+        route.destination = dst;
+        
+        // 简化实现：假设直接通道
+        route.path.push_back(entry.channel);
+        route.totalCost = entry.cost;
+        route.estimatedFidelity = 1.0 - entry.cost;
+        route.estimatedDelay = ns3::MilliSeconds(entry.cost * 1000);
+        route.strategy = ns3::QFS_ON_DEMAND;
+        route.expirationTime = entry.timestamp + m_routeExpirationTimeout;
+        route.routeId = entry.sequenceNumber;
+        
+        return route;
+      }
+    }
+    
+    return ns3::QuantumRoute();
+  }
+  
+  std::vector<ns3::QuantumRouteEntry> GetAllRoutes() const override
+  {
+    return m_routingTable;
+  }
+  
+  bool AddRoute(const ns3::QuantumRouteEntry& entry) override
+  {
+    NS_LOG_LOGIC("SimpleDiscoveryRoutingProtocol::AddRoute to " << entry.destination);
+    
+    // 检查是否已存在到相同目的地的路由
+    for (auto& existingEntry : m_routingTable)
+    {
+      if (existingEntry.destination == entry.destination)
+      {
+        // 更新现有路由（如果新路由的序列号更高或成本更低）
+        if (entry.sequenceNumber > existingEntry.sequenceNumber ||
+            entry.cost < existingEntry.cost)
+        {
+          existingEntry = entry;
+          existingEntry.timestamp = ns3::Simulator::Now();
+          
+          NS_LOG_LOGIC("Updated existing route to " << entry.destination);
+          return true;
+        }
+        else
+        {
+          NS_LOG_LOGIC("Existing route is better or equal, keeping it");
+          return false;
+        }
+      }
+    }
+    
+    // 添加新路由
+    m_routingTable.push_back(entry);
+    NS_LOG_LOGIC("Added new route to " << entry.destination);
+    return true;
+  }
+  
+  bool RemoveRoute(const std::string& dst) override
+  {
+    NS_LOG_LOGIC("SimpleDiscoveryRoutingProtocol::RemoveRoute to " << dst);
+    
+    for (auto it = m_routingTable.begin(); it != m_routingTable.end(); ++it)
+    {
+      if (it->destination == dst)
+      {
+        m_routingTable.erase(it);
+        NS_LOG_LOGIC("Removed route to " << dst);
+        return true;
+      }
+    }
+    
+    NS_LOG_WARN("Route to " << dst << " not found");
+    return false;
+  }
+  
+  bool HasRoute(const std::string& dst) const override
+  {
+    for (const auto& entry : m_routingTable)
+    {
+      if (entry.destination == dst)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+  
+  void SetMetric(ns3::Ptr<ns3::QuantumMetric> metric) override
+  {
+    m_metric = metric;
+  }
+  
+  ns3::Ptr<ns3::QuantumMetric> GetMetric() const override
+  {
+    return m_metric;
+  }
+  
+  void SetResourceManager(ns3::Ptr<ns3::QuantumResourceManager> manager) override
+  {
+    m_resourceManager = manager;
+  }
+  
+  ns3::Ptr<ns3::QuantumResourceManager> GetResourceManager() const override
+  {
+    return m_resourceManager;
+  }
+  
+  void SetNetworkLayer(ns3::Ptr<ns3::QuantumNetworkLayer> layer) override
+  {
+    m_networkLayer = layer;
+  }
+  
+  ns3::Ptr<ns3::QuantumNetworkLayer> GetNetworkLayer() const override
+  {
+    return m_networkLayer;
+  }
+  
+  void ReceivePacket(ns3::Ptr<ns3::QuantumPacket> packet) override
+  {
+    NS_LOG_LOGIC("SimpleDiscoveryRoutingProtocol::ReceivePacket");
+    
+    if (!packet)
+    {
+      NS_LOG_WARN("Received null packet");
+      return;
+    }
+    
+    // 处理路由协议包
+    if (packet->GetType() == ns3::QuantumPacket::ROUTE_REQUEST)
+    {
+      HandleRouteRequest(packet);
+    }
+    else if (packet->GetType() == ns3::QuantumPacket::ROUTE_REPLY)
+    {
+      HandleRouteReply(packet);
+    }
+    else
+    {
+      NS_LOG_LOGIC("Received non-routing packet: " << packet->ToString());
+    }
+  }
+  
+  void SendPacket(ns3::Ptr<ns3::QuantumPacket> packet, const std::string& dst = "") override
+  {
+    NS_LOG_LOGIC("SimpleDiscoveryRoutingProtocol::SendPacket to " << dst);
+    
+    if (!packet)
+    {
+      NS_LOG_WARN("Attempt to send null packet");
+      return;
+    }
+    
+    if (m_networkLayer)
+    {
+      // 设置目的地址
+      if (!dst.empty())
+      {
+        packet->SetDestinationAddress(dst);
+      }
+      
+      // 通过网络层发送
+      m_networkLayer->SendPacket(packet);
+    }
+    else
+    {
+      NS_LOG_WARN("No network layer set for sending packets");
+    }
+  }
+  
+  ns3::QuantumNetworkStats GetStatistics() const override
+  {
+    return m_stats;
+  }
+  
+  void ResetStatistics() override
+  {
+    m_stats.Reset();
+  }
+  
+  void SetRouteExpirationTimeout(ns3::Time timeout) override
+  {
+    m_routeExpirationTimeout = timeout;
+  }
+  
+  ns3::Time GetRouteExpirationTimeout() const override
+  {
+    return m_routeExpirationTimeout;
+  }
+  
+  void SetRouteAvailableCallback(RouteAvailableCallback cb) override
+  {
+    m_routeAvailableCallback = cb;
+  }
+  
+  void SetRouteExpiredCallback(RouteExpiredCallback cb) override
+  {
+    m_routeExpiredCallback = cb;
+  }
+  
+  void SetRouteUpdatedCallback(RouteUpdatedCallback cb) override
+  {
+    m_routeUpdatedCallback = cb;
+  }
+
+private:
+  // 处理路由请求
+  void HandleRouteRequest(ns3::Ptr<ns3::QuantumPacket> request)
+  {
+    std::string src = request->GetSourceAddress();
+    std::string dst = request->GetDestinationAddress();
+    std::string currentAddr = m_networkLayer ? m_networkLayer->GetAddress() : "";
+    
+    NS_LOG_LOGIC("Handling route request from " << src << " to " << dst << " at " << currentAddr);
+    
+    // 如果自己是目的地，发送路由回复
+    if (currentAddr == dst)
+    {
+      SendRouteReply(request);
+      return;
+    }
+    
+    // 否则，检查是否已经转发过这个请求（防止循环）
+    // 简化实现：直接转发给所有邻居（除来源外）
+    // 实际实现需要TTL和请求ID检查
+    
+    // 检查是否知道去目的地的路由
+    if (HasRoute(dst))
+    {
+      // 发送路由回复
+      SendRouteReply(request);
+    }
+    else
+    {
+      // 转发路由请求给所有邻居（除来源外）
+      for (const auto& neighbor : m_neighbors)
+      {
+        if (neighbor.first != src)
+        {
+          // 创建请求副本并转发
+          ns3::Ptr<ns3::QuantumPacket> forwardRequest = request->Copy();
+          SendPacket(forwardRequest, neighbor.first);
+        }
+      }
+    }
+  }
+  
+  // 处理路由回复
+  void HandleRouteReply(ns3::Ptr<ns3::QuantumPacket> reply)
+  {
+    std::string src = reply->GetSourceAddress();
+    std::string dst = reply->GetDestinationAddress();
+    std::string currentAddr = m_networkLayer ? m_networkLayer->GetAddress() : "";
+    
+    NS_LOG_LOGIC("Handling route reply from " << src << " to " << dst << " at " << currentAddr);
+    
+    // 如果自己是请求源，更新路由表
+    if (currentAddr == dst)
+    {
+      // 从回复中提取路由信息并添加到路由表
+      // 简化实现：假设回复包含路由信息
+      // 实际实现需要解析回复包的内容
+    }
+    else
+    {
+      // 转发路由回复给下一跳（朝向目的地）
+      // 简化实现：这里省略
+    }
+  }
+  
+  // 发送路由回复
+  void SendRouteReply(ns3::Ptr<ns3::QuantumPacket> request)
+  {
+    std::string src = request->GetSourceAddress();
+    std::string dst = request->GetDestinationAddress();
+    std::string currentAddr = m_networkLayer ? m_networkLayer->GetAddress() : "";
+    
+    ns3::Ptr<ns3::QuantumPacket> reply = ns3::CreateObject<ns3::QuantumPacket>();
+    reply->SetSourceAddress(currentAddr);
+    reply->SetDestinationAddress(src);
+    reply->SetType(ns3::QuantumPacket::ROUTE_REPLY);
+    reply->SetProtocol(ns3::QuantumPacket::PROTO_QUANTUM_ROUTING);
+    reply->SetSequenceNumber(m_sequenceNumber++);
+    
+    SendPacket(reply, src);
+  }
+  
+  // 清理过期路由
+  void CleanExpiredRoutes()
+  {
+    ns3::Time now = ns3::Simulator::Now();
+    auto it = m_routingTable.begin();
+    while (it != m_routingTable.end())
+    {
+      if ((now - it->timestamp) > m_routeExpirationTimeout)
+      {
+        NS_LOG_LOGIC("Removing expired route to " << it->destination);
+        it = m_routingTable.erase(it);
+      }
+      else
+      {
+        ++it;
+      }
+    }
+  }
+
+private:
+  ns3::Ptr<ns3::QuantumNetworkLayer> m_networkLayer;
+  ns3::Ptr<ns3::QuantumMetric> m_metric;
+  ns3::Ptr<ns3::QuantumResourceManager> m_resourceManager;
+  
+  std::vector<ns3::QuantumRouteEntry> m_routingTable;
+  std::map<std::string, ns3::Ptr<ns3::QuantumChannel>> m_neighbors;
+  ns3::QuantumNetworkStats m_stats;
+  
+  ns3::Time m_routeExpirationTimeout;
+  uint32_t m_sequenceNumber;
+  
+  RouteAvailableCallback m_routeAvailableCallback;
+  RouteExpiredCallback m_routeExpiredCallback;
+  RouteUpdatedCallback m_routeUpdatedCallback;
+};
+
+using namespace ns3;
+
+int 
+main (int argc, char *argv[])
+{
+  // 设置日志级别
+  LogComponentEnable ("QuantumNetworkLayer", LOG_LEVEL_INFO);
+  LogComponentEnable ("QuantumNetworkLayerExample", LOG_LEVEL_INFO);
+  
+  NS_LOG_INFO ("Starting quantum network layer example");
+  
+  // 创建量子物理实体
+  std::vector<std::string> owners = {"Alice", "Bob", "Charlie"};
+  Ptr<QuantumPhyEntity> qphyent = CreateObject<QuantumPhyEntity> (owners);
+  
+  // 创建量子节点
+  Ptr<QuantumNode> alice = CreateObject<QuantumNode> (qphyent, "Alice");
+  Ptr<QuantumNode> bob = CreateObject<QuantumNode> (qphyent, "Bob");
+  Ptr<QuantumNode> charlie = CreateObject<QuantumNode> (qphyent, "Charlie");
+
+  // 安装Internet栈（为DistributeEPRProtocol提供socket支持）
+  InternetStackHelper internet;
+  NodeContainer nodes;
+  nodes.Add (alice);
+  nodes.Add (bob);
+  nodes.Add (charlie);
+  internet.Install (nodes);
+
+  // 创建量子通道
+  Ptr<QuantumChannel> aliceBobChannel = CreateObject<QuantumChannel> ("Alice", "Bob");
+  Ptr<QuantumChannel> bobCharlieChannel = CreateObject<QuantumChannel> ("Bob", "Charlie");
+  
+  // 安装量子网络栈（包括网络层）
+  QuantumNetStackHelper netStackHelper;
+  netStackHelper.Install (alice, bob);
+  netStackHelper.Install (bob, charlie);
+  
+  // 获取网络层
+  Ptr<QuantumNetworkLayer> aliceLayer = alice->GetQuantumNetworkLayer ();
+  Ptr<QuantumNetworkLayer> bobLayer = bob->GetQuantumNetworkLayer ();
+  Ptr<QuantumNetworkLayer> charlieLayer = charlie->GetQuantumNetworkLayer ();
+  
+  if (!aliceLayer || !bobLayer || !charlieLayer)
+  {
+    NS_LOG_ERROR ("Failed to install quantum network layer");
+    return 1;
+  }
+  
+  NS_LOG_INFO ("Quantum network layers installed successfully");
+  
+  // 演示路由协议邻居发现
+  Ptr<QuantumRoutingProtocol> aliceRouting = aliceLayer->GetRoutingProtocol ();
+  if (aliceRouting)
+  {
+    aliceRouting->DiscoverNeighbors ();
+    NS_LOG_INFO ("Alice discovered neighbors");
+    
+    // 获取路由表
+    std::vector<QuantumRouteEntry> routes = aliceRouting->GetAllRoutes ();
+    NS_LOG_INFO ("Alice routing table size: " << routes.size ());
+    for (const auto& route : routes)
+    {
+      NS_LOG_INFO ("  Destination: " << route.destination << ", Next hop: " << route.nextHop 
+                    << ", Cost: " << route.cost);
+    }
+  }
+  
+
+  
+  // 演示创建和发送量子包
+  Ptr<QuantumPacket> packet = CreateObject<QuantumPacket> ();
+  packet->SetSourceAddress ("Alice");
+  packet->SetDestinationAddress ("Charlie");
+  packet->SetType (QuantumPacket::DATA);
+  packet->SetProtocol (QuantumPacket::PROTO_QUANTUM_FORWARDING);
+  
+  // 添加虚拟量子比特引用
+  packet->AddQubitReference ("Qubit1");
+  packet->AddQubitReference ("Qubit2");
+  
+  NS_LOG_INFO ("Created packet: " << packet->ToString ());
+  NS_LOG_INFO ("  Source: " << packet->GetSourceAddress () << ", Destination: " << packet->GetDestinationAddress ());
+  
+  // 演示路由请求
+  QuantumRoute route;
+  if (aliceRouting)
+  {
+    QuantumRouteRequirements requirements;
+    requirements.minFidelity = 0.8;
+    requirements.maxDelay = Seconds (1.0);
+    requirements.numQubits = 2;
+    requirements.duration = Seconds (10.0);
+    requirements.strategy = QFS_ON_DEMAND;
+    
+    route = aliceRouting->RouteRequest ("Alice", "Charlie", requirements);
+    if (route.IsValid ())
+    {
+      NS_LOG_INFO ("Found route from Alice to Charlie via RouteRequest:");
+      NS_LOG_INFO ("  Hops: " << route.GetHopCount ());
+      NS_LOG_INFO ("  Cost: " << route.totalCost);
+      NS_LOG_INFO ("  Estimated fidelity: " << route.estimatedFidelity);
+      NS_LOG_INFO ("  Estimated delay: " << route.estimatedDelay.GetSeconds () << "s");
+    }
+    else
+    {
+      NS_LOG_WARN ("No route found from Alice to Charlie via RouteRequest, building manual route");
+      // 手动构建路由：Alice -> Bob -> Charlie
+      route.source = "Alice";
+      route.destination = "Charlie";
+      route.path.push_back (aliceBobChannel);
+      route.path.push_back (bobCharlieChannel);
+      route.totalCost = 0.1;
+      route.estimatedFidelity = 0.95; // 假设值
+      route.estimatedDelay = Seconds (0.2);
+      route.strategy = QFS_ON_DEMAND;
+      route.expirationTime = Simulator::Now () + Seconds (30.0);
+      route.routeId = 1;
+      
+      NS_LOG_INFO ("Built manual route from Alice to Charlie:");
+      NS_LOG_INFO ("  Hops: " << route.GetHopCount ());
+      NS_LOG_INFO ("  Cost: " << route.totalCost);
+    }
+  }
+  
+  // 设置包的路由（如果有效）
+  if (route.IsValid ())
+  {
+    packet->SetRoute (route);
+    NS_LOG_INFO ("Packet route set successfully");
+  }
+  else
+  {
+    NS_LOG_WARN ("No valid route for packet");
+  }
+  
+  // 演示发送包
+  bool sent = aliceLayer->SendPacket (packet);
+  if (sent)
+  {
+    NS_LOG_INFO ("Packet sent successfully from Alice");
+  }
+  else
+  {
+    NS_LOG_WARN ("Failed to send packet from Alice");
+  }
+  
+  // 演示资源管理
+  Ptr<QuantumResourceManager> resourceManager = aliceLayer->GetResourceManager ();
+  if (resourceManager)
+  {
+    unsigned availableQubits = resourceManager->GetAvailableQubits ("Alice");
+    NS_LOG_INFO ("Alice available qubits: " << availableQubits);
+    
+    // 预约资源
+    bool reserved = resourceManager->ReserveQubits ("Alice", 2, Seconds (5.0));
+    if (reserved)
+    {
+      NS_LOG_INFO ("Reserved 2 qubits on Alice for 5 seconds");
+      availableQubits = resourceManager->GetAvailableQubits ("Alice");
+      NS_LOG_INFO ("Alice available qubits after reservation: " << availableQubits);
+    }
+  }
+  
+  // 演示度量系统
+  Ptr<QuantumMetric> fidelityMetric = QuantumMetric::CreateFidelityMetric ();
+  Ptr<QuantumMetric> delayMetric = QuantumMetric::CreateDelayMetric ();
+  
+  std::vector<Ptr<QuantumMetric>> metrics = {fidelityMetric, delayMetric};
+  std::vector<double> weights = {0.7, 0.3};
+  Ptr<QuantumMetric> compositeMetric = QuantumMetric::CreateCompositeMetric (metrics, weights);
+  
+  NS_LOG_INFO ("Created composite metric: " << compositeMetric->GetName ());
+  NS_LOG_INFO ("  Is additive: " << (compositeMetric->IsAdditive () ? "yes" : "no"));
+  NS_LOG_INFO ("  Is monotonic: " << (compositeMetric->IsMonotonic () ? "yes" : "no"));
+  
+  // 模拟运行
+  Simulator::Stop (Seconds (1.0));
+  Simulator::Run ();
+  Simulator::Destroy ();
+  
+  NS_LOG_INFO ("Quantum network layer example completed successfully");
+  
+  return 0;
+}

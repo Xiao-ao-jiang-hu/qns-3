@@ -3,6 +3,7 @@
 #include "ns3/quantum-basis.h"
 #include "ns3/quantum-phy-entity.h" // class QuantumPhyEntity functions
 #include "ns3/quantum-error-model.h" // class QuantumErrorModel
+#include "ns3/quantum-network-layer.h" // class QuantumNetworkLayer
 
 namespace ns3 {
 
@@ -17,7 +18,8 @@ QuantumNode::QuantumNode (Ptr<QuantumPhyEntity> qphyent_, std::string owner_)
       m_address (Address ()),
       m_next_port (9),
       m_rank (UINT_MAX),
-      m_qmemory (QuantumMemory ())
+      m_qmemory (QuantumMemory ()),
+      m_networkLayer (nullptr)
 {
 }
 
@@ -32,7 +34,8 @@ QuantumNode::QuantumNode ()
       m_address (Address ()),
       m_next_port (9),
       m_rank (UINT_MAX),
-      m_qmemory (QuantumMemory ())
+      m_qmemory (QuantumMemory ()),
+      m_networkLayer (nullptr)
 {
 }
 
@@ -156,6 +159,18 @@ QuantumNode::PrintIt () const
 {
   NS_LOG_LOGIC ("m_owner  : " << m_owner << "\naddress: " << m_address
                               << "\nnapps  : " << GetNApplications ());
+}
+
+Ptr<QuantumNetworkLayer>
+QuantumNode::GetQuantumNetworkLayer () const
+{
+  return m_networkLayer;
+}
+
+void
+QuantumNode::SetQuantumNetworkLayer (Ptr<QuantumNetworkLayer> networkLayer)
+{
+  m_networkLayer = networkLayer;
 }
 
 std::ostream &

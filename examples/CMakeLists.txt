@@ -1,30 +1,6 @@
 # teleportation
 
 build_lib_example(
-    NAME telep-app-example
-    SOURCE_FILES telep-app-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
-    NAME telep-app-repeat-example
-    SOURCE_FILES telep-app-repeat-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
-    NAME msg-flow-example
-    SOURCE_FILES msg-flow-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
-    NAME telep-adapt-example
-    SOURCE_FILES telep-adapt-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
     NAME telep-lin-example
     SOURCE_FILES telep-lin-example.cc
     LIBRARIES_TO_LINK ${libquantum}
@@ -59,24 +35,6 @@ build_lib_example(
 # distillation
 
 build_lib_example(
-    NAME distill-app-example
-    SOURCE_FILES distill-app-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
-    NAME distill-app-repeat-example
-    SOURCE_FILES distill-app-repeat-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
-    NAME distill-adapt-example
-    SOURCE_FILES distill-adapt-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
     NAME distill-nested-example
     SOURCE_FILES distill-nested-example.cc
     LIBRARIES_TO_LINK ${libquantum}
@@ -85,6 +43,34 @@ build_lib_example(
 build_lib_example(
     NAME distill-nested-adapt-example
     SOURCE_FILES distill-nested-adapt-example.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+# quantum network layer
+build_lib_example(
+    NAME quantum-network-layer-example
+    SOURCE_FILES quantum-network-layer-example.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+# Q-CAST performance test
+build_lib_example(
+    NAME qcast-performance-test
+    SOURCE_FILES qcast-performance-test.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+# Q-CAST protocol example
+build_lib_example(
+    NAME qcast-protocol-example
+    SOURCE_FILES qcast-protocol-example.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+# Q-CAST scaling test
+build_lib_example(
+    NAME qcast-scaling-test
+    SOURCE_FILES qcast-scaling-test-simple.cc
     LIBRARIES_TO_LINK ${libquantum}
 )
 

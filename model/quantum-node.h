@@ -9,6 +9,7 @@ namespace ns3 {
 
 class QuantumPhyEntity;
 class QuantumErrorModel;
+class QuantumNetworkLayer;
 
 class QuantumNode : public Node
 {
@@ -32,6 +33,9 @@ private:
 
   /** Quantum memory of the node. */
   QuantumMemory m_qmemory;
+
+  /** Quantum network layer for routing and forwarding. */
+  Ptr<QuantumNetworkLayer> m_networkLayer;
 
 public:
   QuantumNode (Ptr<QuantumPhyEntity> phyent_, std::string owner_);
@@ -60,6 +64,12 @@ public:
   uint16_t GetNextPort () const;
 
   Ptr<QuantumPhyEntity> GetQuantumPhyEntity () const;
+
+  /** \brief Get the quantum network layer of this node. */
+  Ptr<QuantumNetworkLayer> GetQuantumNetworkLayer () const;
+
+  /** \brief Set the quantum network layer for this node. */
+  void SetQuantumNetworkLayer (Ptr<QuantumNetworkLayer> networkLayer);
 
   /**
    * \brief Add a qubit to the node's quantum memory.

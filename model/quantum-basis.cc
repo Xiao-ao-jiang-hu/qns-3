@@ -45,7 +45,7 @@ operator<< (std::ostream &out, const std::complex<double> &val)
 std::vector<std::complex<double>>
 operator* (std::complex<double> scalar, std::vector<std::complex<double>> vec)
 {
-  for (int i = 0; i < vec.size (); i++)
+  for (size_t i = 0; i < vec.size (); i++)
     {
       vec[i] *= scalar;
     }
@@ -56,7 +56,7 @@ std::vector<std::complex<double>>
 operator+ (std::vector<std::complex<double>> vec1, std::vector<std::complex<double>> vec2)
 {
   assert (vec1.size () == vec2.size ());
-  for (int i = 0; i < vec1.size (); i++)
+  for (size_t i = 0; i < vec1.size (); i++)
     {
       vec1[i] += vec2[i];
     }
@@ -67,7 +67,7 @@ bool
 operator== (std::vector<std::complex<double>> vec1, std::vector<std::complex<double>> vec2)
 {
   assert (vec1.size () == vec2.size ());
-  for (int i = 0; i < vec1.size (); i++)
+  for (size_t i = 0; i < vec1.size (); i++)
     {
       if (abs (norm (vec1[i] - vec2[i])) > EPS)
         return false;

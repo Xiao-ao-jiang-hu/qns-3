@@ -7,6 +7,7 @@ namespace ns3 {
 
 class QuantumPhyEntity;
 class QuantumNode;
+class QuantumNetworkLayer;
 
 class QuantumNetStackHelper
 {
@@ -18,6 +19,9 @@ public:
   void Install (Ptr<QuantumNode> alice, Ptr<QuantumNode> bob) const;
 
   void Install (NodeContainer c) const;
+
+  /** \brief Install quantum network layer on a node */
+  void InstallNetworkLayer (Ptr<QuantumNode> node) const;
 
 private:
   Ptr<QuantumPhyEntity> m_qphyent;

@@ -27,6 +27,17 @@ build_lib(
                 model/quantum-memory.cc
                 model/quantum-node.cc
                 model/quantum-channel.cc
+                model/quantum-packet.cc
+                model/quantum-route-types.cc
+                model/quantum-metric.cc
+                model/quantum-network-layer.cc
+                model/quantum-resource-manager.cc
+                model/quantum-forwarding-engine.cc
+                model/quantum-routing-protocol.cc
+                model/qcast/expected-throughput-metric.cc
+                model/qcast/qcast-route-types.cc
+                model/qcast/qcast-routing-protocol.cc
+                model/qcast/qcast-forwarding-engine.cc
 
                 model/distribute-epr-protocol.cc
                 model/telep-app.cc
@@ -61,6 +72,17 @@ build_lib(
                 model/quantum-memory.h
                 model/quantum-node.h
                 model/quantum-channel.h
+                model/quantum-packet.h
+                model/quantum-route-types.h
+                model/quantum-metric.h
+                model/quantum-network-layer.h
+                model/quantum-resource-manager.h
+                model/quantum-forwarding-engine.h
+                model/quantum-routing-protocol.h
+                model/qcast/expected-throughput-metric.h
+                model/qcast/qcast-route-types.h
+                model/qcast/qcast-routing-protocol.h
+                model/qcast/qcast-forwarding-engine.h
 
                 model/distribute-epr-protocol.h
                 model/telep-app.h
