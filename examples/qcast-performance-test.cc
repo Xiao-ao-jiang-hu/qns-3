@@ -40,6 +40,7 @@
 #include "ns3/random-variable-stream.h"
 #include "ns3/command-line.h"
 #include "ns3/nstime.h"
+#include <exatn.hpp>  // For ExaTN tensor cleanup between tests
 
 #include <iostream>
 #include <fstream>
@@ -83,7 +84,8 @@ struct PerformanceResult
   
   // Q-CAST特定指标
   double avgRecoveryPaths;                /**< 平均恢复路径数 */
-  double avgSuccessProbability;           /**< 平均成功概率 */
+  double avgSuccessProbability;           /**< 平均成功概率（估计值）*/
+  double avgActualFidelity;               /**< 平均实际保真度（物理仿真） */
   int totalEntanglementSwaps;             /**< 总纠缠交换次数 */
   int totalEprPairsDistributed;           /**< 总EPR对分发数 */
   
@@ -110,6 +112,7 @@ struct PerformanceResult
       avgCost(0.0),
       avgRecoveryPaths(0.0),
       avgSuccessProbability(0.0),
+      avgActualFidelity(-1.0),
       totalEntanglementSwaps(0),
       totalEprPairsDistributed(0),
       avgResourceReservationRate(0.0),
@@ -127,7 +130,7 @@ struct PerformanceResult
     return "test_name,num_nodes,num_links,link_success_rate,concurrent_requests,"
            "total_requests,successful_requests,route_success_rate,"
            "avg_discovery_time_ms,avg_path_length,avg_delay_ms,avg_cost,"
-           "avg_recovery_paths,avg_success_probability,total_entanglement_swaps,"
+           "avg_recovery_paths,avg_estimated_fidelity,avg_actual_fidelity,total_entanglement_swaps,"
            "total_epr_pairs,avg_resource_reservation_rate,avg_memory_utilization,"
            "total_routing_packets_sent,total_routing_packets_received,total_forwarding_packets";
   }
@@ -153,6 +156,7 @@ struct PerformanceResult
     ss << avgCost << ",";
     ss << avgRecoveryPaths << ",";
     ss << avgSuccessProbability << ",";
+    ss << avgActualFidelity << ",";
     ss << totalEntanglementSwaps << ",";
     ss << totalEprPairsDistributed << ",";
     ss << avgResourceReservationRate << ",";
@@ -190,7 +194,15 @@ struct PerformanceResult
     NS_LOG_INFO("");
     NS_LOG_INFO("Q-CAST特性:");
     NS_LOG_INFO("  平均恢复路径数: " << avgRecoveryPaths);
-    NS_LOG_INFO("  平均成功概率: " << avgSuccessProbability * 100 << "%");
+    NS_LOG_INFO("  平均估计保真度: " << avgSuccessProbability * 100 << "%");
+    if (avgActualFidelity >= 0)
+    {
+      NS_LOG_INFO("  平均实际保真度: " << avgActualFidelity * 100 << "% (物理仿真)");
+    }
+    else
+    {
+      NS_LOG_INFO("  平均实际保真度: N/A (物理仿真未启用)");
+    }
     NS_LOG_INFO("  总纠缠交换次数: " << totalEntanglementSwaps);
     NS_LOG_INFO("  总EPR对分发数: " << totalEprPairsDistributed);
     NS_LOG_INFO("");
@@ -673,6 +685,37 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
   Ptr<QCastForwardingEngine> forwardingEngine = CreateObject<QCastForwardingEngine>();
   forwardingEngine->SetForwardingStrategy(QFS_ON_DEMAND);
   
+  // 获取 QuantumPhyEntity 并配置物理层仿真
+  // 所有节点共享同一个 QuantumPhyEntity（拓扑创建时已创建）
+  if (!nodes.empty())
+  {
+    Ptr<QuantumPhyEntity> qphyent = nodes[0]->GetQuantumPhyEntity();
+    if (qphyent)
+    {
+      NS_LOG_INFO("配置物理层仿真：启用 TimeModel 进行存储退相干仿真");
+      
+      // 为每个节点设置 TimeModel（存储退相干）
+      // T2 coherence time: 100ms = 0.1 seconds
+      // 使用 rate = T2 time (the larger, the slower decoherence)
+      double t2CoherenceTime = 0.1;  // 100ms T2 coherence time
+      for (size_t i = 0; i < nodes.size(); ++i)
+      {
+        std::string owner = GetNodeOwnerName(topologyType, i, rows, cols);
+        qphyent->SetTimeModel(owner, t2CoherenceTime);
+        NS_LOG_LOGIC("节点 " << owner << " 设置 TimeModel: T2=" << t2CoherenceTime << "s");
+      }
+      
+      // 将 QuantumPhyEntity 传递给转发引擎
+      // 这使得 DistributeEPR 和 PerformEntanglementSwap 可以调用实际的物理层操作
+      forwardingEngine->SetQuantumPhyEntity(qphyent);
+      NS_LOG_INFO("转发引擎已连接物理层：将执行实际 EPR 生成和纠缠交换仿真");
+    }
+    else
+    {
+      NS_LOG_WARN("无法获取 QuantumPhyEntity，物理层仿真将被禁用");
+    }
+  }
+  
   // 获取资源管理器
   Ptr<QuantumResourceManager> resourceManager = QuantumResourceManager::GetDefaultResourceManager();
   
@@ -715,6 +758,12 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
     Ptr<QCastRoutingProtocol> nodeRoutingProtocol = CreateObject<QCastRoutingProtocol>();
     nodeRoutingProtocol->SetMetric(etMetric);
     nodeRoutingProtocol->SetKHopDistance(3);
+    
+    // Storage decoherence and classical delay parameters are now set by default:
+    // - T2 = 100ms (quantum memory coherence time)
+    // - Classical delay = 5ms per hop (simulates realistic network latency)
+    // - Jitter = 50% (simulates background traffic variance)
+    // These defaults cause significant fidelity reduction for multi-hop paths
     
     // 配置网络层
     networkLayer->SetRoutingProtocol(nodeRoutingProtocol);
@@ -807,14 +856,26 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
     
     if (route.IsValid())
     {
-      // 记录成功路由
-      collector.RecordSuccessfulRoute(route, discoveryTime, 1, 0.95); // 简化：假设1个恢复路径，95%成功率
+      // 使用路由协议计算的估计保真度（包括信道保真度和存储退相干）
+      // route.estimatedFidelity 由 G-EDA 算法计算，考虑了：
+      // 1. 信道保真度：每跳的去极化信道误差
+      // 2. 存储退相干：log-time swap 调度期间的量子存储退相干
+      double successProbability = route.estimatedFidelity;
+      
+      // 如果物理层仿真启用，将在 ForwardPacket 中执行实际的 EPR 生成和纠缠交换
+      // 此时 successProbability 是估计值；实际保真度可通过 CalculateActualFidelity 获取
+      NS_LOG_INFO("路由成功: " << sourceNetworkLayer->GetAddress() << " -> " << destAddress
+                  << ", 跳数=" << route.GetHopCount()
+                  << ", 估计保真度=" << successProbability);
+      
+      // 记录成功路由（使用估计保真度）
+      collector.RecordSuccessfulRoute(route, discoveryTime, 1, successProbability);
       
       // 记录资源预留尝试
       collector.RecordResourceReservationAttempt(true);
       
-      // 可选：发送测试包
-       Ptr<QuantumPacket> packet = CreateObject<QuantumPacket>(sourceNetworkLayer->GetAddress(), destAddress);
+      // 发送测试包 - 这会触发实际的物理层仿真（如果已启用）
+      Ptr<QuantumPacket> packet = CreateObject<QuantumPacket>(sourceNetworkLayer->GetAddress(), destAddress);
       packet->SetType(QuantumPacket::DATA);
       packet->SetProtocol(QuantumPacket::PROTO_QUANTUM_FORWARDING);
       packet->SetRoute(route);
@@ -850,6 +911,27 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
                                                 linkSuccessRate,
                                                 concurrentRequests);
   
+  // 收集实际保真度统计（来自物理层仿真）
+  double avgActualFidelity = forwardingEngine->GetAverageActualFidelity();
+  result.avgActualFidelity = avgActualFidelity;
+  
+  // 打印详细的实际保真度统计
+  auto fidelityStats = forwardingEngine->GetActualFidelityStats();
+  if (!fidelityStats.empty())
+  {
+    NS_LOG_INFO("");
+    NS_LOG_INFO("=== 实际保真度统计（物理仿真）===");
+    for (const auto& stats : fidelityStats)
+    {
+      NS_LOG_INFO("路由 " << stats.routeId << ": 跳数=" << stats.hopCount
+                  << ", 估计=" << stats.estimatedFidelity
+                  << ", 实际=" << stats.actualFidelity
+                  << ", 差异=" << (stats.actualFidelity - stats.estimatedFidelity));
+    }
+    NS_LOG_INFO("平均实际保真度: " << avgActualFidelity);
+    NS_LOG_INFO("=== 实际保真度统计结束 ===");
+  }
+  
   // Print routing tables and topology for debugging
   NS_LOG_INFO("");
   NS_LOG_INFO("=== Debug Information ===");
@@ -869,8 +951,15 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
   NS_LOG_INFO("=== End Debug Information ===");
   NS_LOG_INFO("");
   
-  // 清理
+  // 清理 ns-3 Simulator
   Simulator::Destroy();
+  
+  // 清理 ExaTN 张量以便下一次测试可以重新使用相同的张量名称
+  // 这对于在同一进程中运行多次测试是必要的
+  NS_LOG_INFO("清理 ExaTN 张量...");
+  exatn::sync();  // 等待所有异步操作完成
+  exatn::destroyTensors();  // 销毁所有已创建的张量
+  NS_LOG_INFO("ExaTN 张量清理完成");
   
   NS_LOG_INFO("测试完成: " << testName);
   result.PrintReport();
@@ -1007,6 +1096,26 @@ int main(int argc, char *argv[])
         allResults.push_back(result);
         outputStream << result.ToCsvString() << std::endl;
       }
+    }
+  }
+  
+  // 测试套件5：不同链路保真度（验证物理层保真度参数）
+  if (runAllTests || singleTest == "test5")
+  {
+    NS_LOG_INFO("");
+    NS_LOG_INFO("运行测试套件5: 不同链路保真度");
+    
+    // 测试不同的链路保真度值：0.90, 0.95, 0.99
+    std::vector<double> fidelities = {0.90, 0.95, 0.99};
+    
+    for (double fidelity : fidelities)
+    {
+      // 10节点链式拓扑
+      std::string testName = "chain_10nodes_epr20_" + 
+                            std::to_string((int)(fidelity * 100)) + "pct_10req";
+      PerformanceResult result = RunPerformanceTest("chain", 10, fidelity, 10, testName, 20);
+      allResults.push_back(result);
+      outputStream << result.ToCsvString() << std::endl;
     }
   }
   

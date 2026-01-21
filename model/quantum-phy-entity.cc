@@ -403,6 +403,24 @@ QuantumPhyEntity::GenerateEPR (Ptr<QuantumChannel> qconn,
 double 
 QuantumPhyEntity::CalculateFidelity (const std::pair<std::string, std::string> &epr, double &fidel)
 {
+  // Apply TimeModel decoherence before calculating fidelity
+  // This simulates the storage decoherence that occurred while qubits waited in memory
+  Time moment = Simulator::Now ();
+  std::vector<std::string> qubits = {epr.first, epr.second};
+  
+  for (const std::string &qubit : qubits)
+  {
+    if (!CheckValid ({qubit}))
+    {
+      continue;
+    }
+    // Apply time-based decoherence (TimeModel) if qubit has an associated error model
+    if (m_qubit2model.find (qubit) != m_qubit2model.end ())
+    {
+      ApplyErrorModel ({qubit}, moment);
+    }
+  }
+  
   return m_qnetsim.CalculateFidelity (epr, fidel);
 }
 

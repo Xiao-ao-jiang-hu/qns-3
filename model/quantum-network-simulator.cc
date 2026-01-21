@@ -833,6 +833,7 @@ QuantumNetworkSimulator::CalculateFidelity (
 )
 {
   NS_LOG_INFO (CYAN_CODE << "Calculating fidelity for epr pair (" << epr.first << ", " << epr.second << ")" << END_CODE);
+  NS_LOG_INFO ("Total qubits in m_qubits_all: " << m_qubits_all.size ());
 
   // state vector of bell
   PrepareTensor (QNS_PREFIX + "BellSV", {2, 2}, q_bell);
@@ -843,6 +844,7 @@ QuantumNetworkSimulator::CalculateFidelity (
   std::vector<unsigned> other_leg_idx = {};
   std::vector<unsigned> other_tensor_id_dag = {};
   std::vector<unsigned> other_leg_idx_dag = {};
+  size_t validOtherQubits = 0;
   for (const std::string &q : m_qubits_all)
     {
       if (!CheckValid ({q}))
@@ -855,8 +857,10 @@ QuantumNetworkSimulator::CalculateFidelity (
           other_leg_idx.push_back (m_qubit2tensor[q].second);
           other_tensor_id_dag.push_back (m_qubit2tensor_dag[q].first);
           other_leg_idx_dag.push_back (m_qubit2tensor_dag[q].second);
+          validOtherQubits++;
         }
     }
+  NS_LOG_INFO ("Other qubits to trace out: " << validOtherQubits);
 
   // copy out the circuit
   exatn::TensorNetwork circuit_peek = m_dm;

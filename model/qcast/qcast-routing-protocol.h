@@ -62,6 +62,42 @@ public:
    * \param k The k-hop distance (default is 3)
    */
   void SetKHopDistance(unsigned k);
+  
+  /**
+   * \brief Set the memory coherence time for storage decoherence calculation
+   * \param coherenceTime The coherence time (T2 dephasing time)
+   */
+  void SetMemoryCoherenceTime(Time coherenceTime);
+  
+  /**
+   * \brief Get the memory coherence time
+   * \return The current memory coherence time
+   */
+  Time GetMemoryCoherenceTime() const;
+  
+  /**
+   * \brief Set the classical communication delay per hop
+   * \param delay The classical delay per hop
+   */
+  void SetClassicalDelayPerHop(Time delay);
+  
+  /**
+   * \brief Get the classical delay per hop
+   * \return The current classical delay per hop
+   */
+  Time GetClassicalDelayPerHop() const;
+  
+  /**
+   * \brief Set the classical delay jitter ratio (simulates background traffic)
+   * \param jitterRatio The jitter ratio (0-1), e.g., 0.5 means ±50% variance
+   */
+  void SetClassicalDelayJitter(double jitterRatio);
+  
+  /**
+   * \brief Get the classical delay jitter ratio
+   * \return The current jitter ratio
+   */
+  double GetClassicalDelayJitter() const;
 
   /**
    * \brief Get the k-hop distance
@@ -152,6 +188,11 @@ private:
   Time m_topologyDiscoveryInterval;             ///< Interval for topology discovery (5 seconds)
   bool m_topologyConverged;                     ///< Whether topology has converged
   uint32_t m_myLsaSequenceNumber;               ///< My current LSA sequence number
+  
+  // Storage decoherence and classical delay parameters
+  Time m_memoryCoherenceTime;                   ///< Quantum memory coherence time (T2)
+  Time m_classicalDelayPerHop;                  ///< Classical communication delay per hop
+  double m_classicalDelayJitter;                ///< Jitter ratio (0-1) to simulate background traffic
 };
 
 } // namespace ns3

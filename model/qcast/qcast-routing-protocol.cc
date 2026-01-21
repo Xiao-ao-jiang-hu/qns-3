@@ -38,7 +38,10 @@ QCastRoutingProtocol::QCastRoutingProtocol ()
     m_kHopDistance (3),  // k=3
     m_topologyDiscoveryInterval (Seconds (5.0)),  // Topology discovery interval (5 seconds)
     m_topologyConverged (false),
-    m_myLsaSequenceNumber (0)
+    m_myLsaSequenceNumber (0),
+    m_memoryCoherenceTime (Seconds (0.1)),        // Default: 100ms coherence time (T2)
+    m_classicalDelayPerHop (MilliSeconds (5.0)),  // Default: 5 ms per hop (significant delay)
+    m_classicalDelayJitter (0.5)                  // Default: 50% jitter to simulate background traffic
 {
   NS_LOG_LOGIC ("Creating QCastRoutingProtocol with k=" << m_kHopDistance);
   ResetStatistics ();
@@ -389,6 +392,7 @@ QCastRoutingProtocol::GreedyExtendedDijkstra (const std::string& src,
   }
   
   // Calculate fidelity using actual channel fidelities from physics layer
+  // Also consider storage decoherence due to classical communication delay
   size_t hopCount = nodeSeq.size () - 1;
   route.estimatedFidelity = 1.0;
   route.estimatedDelay = Seconds (0.0);
@@ -405,6 +409,10 @@ QCastRoutingProtocol::GreedyExtendedDijkstra (const std::string& src,
   }
   
   // Calculate path fidelity as product of channel fidelities
+  // F_total = F_channel^n * F_storage_decoherence
+  double totalChannelFidelity = 1.0;
+  Time totalClassicalDelay = Seconds (0.0);
+  
   for (size_t i = 0; i < nodeSeq.size () - 1; ++i)
   {
     std::string fromNode = nodeSeq[i];
@@ -439,16 +447,72 @@ QCastRoutingProtocol::GreedyExtendedDijkstra (const std::string& src,
       }
     }
     
-    route.estimatedFidelity *= channelFidelity;
-    route.estimatedDelay += Seconds (0.01);  // 10ms per hop
+    totalChannelFidelity *= channelFidelity;
+    
+    // Add classical delay for this hop (for entanglement swap coordination)
+    totalClassicalDelay += m_classicalDelayPerHop;
   }
+  
+  // Calculate storage decoherence factor
+  // During multi-hop entanglement establishment, qubits wait in memory
+  // while classical messages coordinate entanglement swaps
+  // Total waiting time scales with number of hops (roughly O(log n) for binary tree swap)
+  // 
+  // Key insight: Classical network delay directly affects quantum fidelity because:
+  // 1. Entanglement swaps must wait for classical coordination messages
+  // 2. Qubits stored in quantum memory decohere while waiting
+  // 3. Background traffic causes random delays in classical messages
+  //
+  // F_storage = (1 + exp(-t_wait / T2)) / 2 for dephasing
+  double storageDecoherenceFactor = 1.0;
+  if (hopCount > 0 && m_memoryCoherenceTime.GetSeconds () > 0)
+  {
+    // In log-time swap scheduling, total waiting time is:
+    // t_wait = sum over all levels of classical delay at each level
+    // For a path with n hops, tree height = ceil(log2(n))
+    // Average case: each level adds one round-trip classical delay
+    double treeHeight = std::ceil (std::log2 (std::max ((double)hopCount, 1.0)));
+    
+    // Base waiting time: tree_height * classical_delay_per_hop
+    // With jitter: actual delay varies randomly (simulating background traffic)
+    // For fidelity estimation, we use expected value with jitter variance
+    double baseWaitTimeMs = treeHeight * m_classicalDelayPerHop.GetMilliSeconds ();
+    
+    // Add expected jitter effect: variance increases waiting time impact
+    // E[delay] = base_delay, Var[delay] = (jitter * base_delay)^2 / 3 for uniform
+    // For decoherence, we use worst-case estimate: base * (1 + jitter/2)
+    double expectedWaitTimeMs = baseWaitTimeMs * (1.0 + m_classicalDelayJitter / 2.0);
+    Time avgWaitTime = MilliSeconds (expectedWaitTimeMs);
+    
+    // Dephasing probability: p = (1 - exp(-t/T2)) / 2
+    // Fidelity factor: F = 1 - p = (1 + exp(-t/T2)) / 2
+    double t_over_T2 = avgWaitTime.GetSeconds () / m_memoryCoherenceTime.GetSeconds ();
+    storageDecoherenceFactor = (1.0 + std::exp (-t_over_T2)) / 2.0;
+    
+    NS_LOG_INFO ("Storage decoherence: hops=" << hopCount 
+                 << ", tree_height=" << treeHeight
+                 << ", base_wait=" << baseWaitTimeMs << "ms"
+                 << ", with_jitter=" << expectedWaitTimeMs << "ms"
+                 << ", T2=" << m_memoryCoherenceTime.GetMilliSeconds () << "ms"
+                 << ", t/T2=" << t_over_T2
+                 << ", factor=" << storageDecoherenceFactor);
+  }
+  
+  // Total fidelity includes both channel fidelity and storage decoherence
+  route.estimatedFidelity = totalChannelFidelity * storageDecoherenceFactor;
+  
+  // Estimate total delay (classical + quantum operations)
+  // Each hop requires: EPR distribution + classical signaling + swap operation
+  route.estimatedDelay = totalClassicalDelay + Seconds (0.01 * hopCount);  // 10ms per hop for quantum ops
   
   route.strategy = requirements.strategy;
   route.expirationTime = Simulator::Now () + requirements.duration;
   route.routeId = m_stats.routeRequests + 1;
   
   NS_LOG_INFO ("G-EDA found path with " << hopCount << " hops, cost=" << route.totalCost
-               << ", fidelity=" << route.estimatedFidelity << " (calculated from channel fidelities)");
+               << ", fidelity=" << route.estimatedFidelity 
+               << " (channel=" << totalChannelFidelity 
+               << ", storage_decoherence=" << storageDecoherenceFactor << ")");
   
   return route;
 }
@@ -1361,6 +1425,14 @@ QCastRoutingProtocol::SimulateTopologyExchange (const std::vector<Ptr<QuantumNet
       
     std::string nodeId = layer->GetAddress ();
     
+    // Get QuantumPhyEntity for fidelity queries
+    Ptr<QuantumPhyEntity> qphyent = nullptr;
+    Ptr<QuantumNode> qnode = layer->GetQuantumNode ();
+    if (qnode)
+    {
+      qphyent = qnode->GetQuantumPhyEntity ();
+    }
+    
     // Generate LSA for this node based on its neighbors
     TopologyLSA lsa;
     lsa.nodeId = nodeId;
@@ -1374,7 +1446,16 @@ QCastRoutingProtocol::SimulateTopologyExchange (const std::vector<Ptr<QuantumNet
       std::string neighborId = (channel->GetSrcOwner () != nodeId) ? 
                                channel->GetSrcOwner () : channel->GetDstOwner ();
       lsa.neighbors.push_back (neighborId);
-      lsa.linkMetrics.push_back (0.95); // Default link quality
+      
+      // Get actual fidelity from physics layer via channel
+      double linkFidelity = 0.95; // Default
+      if (channel && qphyent)
+      {
+        linkFidelity = channel->GetFidelity (qphyent);
+        NS_LOG_LOGIC ("SimulateTopologyExchange: Using actual fidelity " << linkFidelity 
+                      << " for link " << nodeId << " -> " << neighborId);
+      }
+      lsa.linkMetrics.push_back (linkFidelity);
     }
     
     allLsas.push_back (lsa);
@@ -1477,4 +1558,48 @@ QCastRoutingProtocol::PrintGlobalTopology () const
   NS_LOG_INFO ("=== End Global Topology ===");
   NS_LOG_INFO ("");
 }
+
+// ===========================================================================
+// Storage Decoherence and Classical Delay Methods
+// ===========================================================================
+
+void
+QCastRoutingProtocol::SetMemoryCoherenceTime (Time coherenceTime)
+{
+  m_memoryCoherenceTime = coherenceTime;
+  NS_LOG_LOGIC ("Set memory coherence time to " << coherenceTime.As (Time::S));
+}
+
+Time
+QCastRoutingProtocol::GetMemoryCoherenceTime () const
+{
+  return m_memoryCoherenceTime;
+}
+
+void
+QCastRoutingProtocol::SetClassicalDelayPerHop (Time delay)
+{
+  m_classicalDelayPerHop = delay;
+  NS_LOG_LOGIC ("Set classical delay per hop to " << delay.As (Time::MS));
+}
+
+Time
+QCastRoutingProtocol::GetClassicalDelayPerHop () const
+{
+  return m_classicalDelayPerHop;
+}
+
+void
+QCastRoutingProtocol::SetClassicalDelayJitter (double jitterRatio)
+{
+  m_classicalDelayJitter = std::max (0.0, std::min (1.0, jitterRatio));  // Clamp to [0, 1]
+  NS_LOG_LOGIC ("Set classical delay jitter to " << m_classicalDelayJitter * 100 << "%");
+}
+
+double
+QCastRoutingProtocol::GetClassicalDelayJitter () const
+{
+  return m_classicalDelayJitter;
+}
+
 } // namespace ns3
