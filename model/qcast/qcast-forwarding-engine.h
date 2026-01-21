@@ -170,6 +170,9 @@ private:
   // Track current route's EPR pairs for fidelity calculation
   std::pair<std::string, std::string> m_currentRouteEndpoints;  ///< Source and destination qubits of current route
   std::vector<std::pair<std::string, std::string>> m_currentRouteEprPairs;  ///< All EPR pairs for current route
+  
+  // Route-specific QuantumPhyEntity for isolated tensor network (avoids interference between routes)
+  Ptr<QuantumPhyEntity> m_currentRouteQphyent;  ///< Dedicated physics entity for current route
 };
 
 } // namespace ns3

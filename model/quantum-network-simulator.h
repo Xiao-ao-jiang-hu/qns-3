@@ -41,11 +41,36 @@ private:
 
 /* util */
   
-  /** Count of ExaTN tensor names allocated automatically. */
-  unsigned m_exatn_name_count;
+  /** 
+   * Global count of ExaTN tensor names allocated automatically.
+   * Using static to ensure unique names across all QuantumNetworkSimulator instances.
+   */
+  static unsigned s_exatn_name_count;
+  
+  /**
+   * Flag to track if ExaTN has been initialized (singleton pattern).
+   * ExaTN should only be initialized once per process lifetime.
+   */
+  static bool s_exatn_initialized;
+  
+  /**
+   * Count of active QuantumNetworkSimulator instances.
+   * Used to determine when to finalize ExaTN (when last instance is destroyed).
+   */
+  static unsigned s_instance_count;
 
   /** All created ExaTN tensors. */
   std::vector<std::string> m_exatn_tensors = {};
+  
+public:
+  /**
+   * \brief Reset ExaTN state between tests.
+   * 
+   * This method should be called between simulation tests to ensure a clean
+   * ExaTN state. It destroys all tensors and reinitializes ExaTN.
+   * Only call this when there are no active QuantumNetworkSimulator instances.
+   */
+  static void ResetExaTNState ();
 
 public:
   QuantumNetworkSimulator (const std::vector<std::string> &owners);

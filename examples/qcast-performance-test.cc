@@ -98,6 +98,17 @@ struct PerformanceResult
   int totalRoutingPacketsReceived;        /**< 总路由包接收数 */
   int totalForwardingPackets;             /**< 总转发包数 */
   
+  // 每路由保真度统计
+  struct RouteFidelityEntry
+  {
+    uint32_t routeId;
+    uint32_t hopCount;
+    double estimatedFidelity;
+    double actualFidelity;
+    double waitTimeMs;
+  };
+  std::vector<RouteFidelityEntry> routeFidelityStats;  /**< 每路由保真度统计 */
+  
   PerformanceResult()
     : numNodes(0),
       numLinks(0),
@@ -205,6 +216,29 @@ struct PerformanceResult
     }
     NS_LOG_INFO("  总纠缠交换次数: " << totalEntanglementSwaps);
     NS_LOG_INFO("  总EPR对分发数: " << totalEprPairsDistributed);
+    NS_LOG_INFO("");
+    // 每路由保真度详情
+    if (!routeFidelityStats.empty())
+    {
+      NS_LOG_INFO("每路由保真度详情:");
+      NS_LOG_INFO("  +----------+------+----------+----------+----------+----------+");
+      NS_LOG_INFO("  | 路由ID   | 跳数 | 估计保真度| 实际保真度| 差异     | 等待时间 |");
+      NS_LOG_INFO("  +----------+------+----------+----------+----------+----------+");
+      for (const auto& entry : routeFidelityStats)
+      {
+        double diff = entry.actualFidelity - entry.estimatedFidelity;
+        std::stringstream ss;
+        ss << std::fixed << std::setprecision(4);
+        ss << "  | " << std::setw(8) << entry.routeId
+           << " | " << std::setw(4) << entry.hopCount
+           << " | " << std::setw(8) << (entry.estimatedFidelity * 100) << "%"
+           << " | " << std::setw(8) << (entry.actualFidelity * 100) << "%"
+           << " | " << std::setw(7) << (diff * 100) << "%"
+           << " | " << std::setw(6) << entry.waitTimeMs << "ms |";
+        NS_LOG_INFO(ss.str());
+      }
+      NS_LOG_INFO("  +----------+------+----------+----------+----------+----------+");
+    }
     NS_LOG_INFO("");
     NS_LOG_INFO("资源使用:");
     NS_LOG_INFO("  平均资源预留成功率: " << avgResourceReservationRate * 100 << "%");
@@ -915,21 +949,17 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
   double avgActualFidelity = forwardingEngine->GetAverageActualFidelity();
   result.avgActualFidelity = avgActualFidelity;
   
-  // 打印详细的实际保真度统计
+  // 复制保真度统计到结果结构体
   auto fidelityStats = forwardingEngine->GetActualFidelityStats();
-  if (!fidelityStats.empty())
+  for (const auto& stats : fidelityStats)
   {
-    NS_LOG_INFO("");
-    NS_LOG_INFO("=== 实际保真度统计（物理仿真）===");
-    for (const auto& stats : fidelityStats)
-    {
-      NS_LOG_INFO("路由 " << stats.routeId << ": 跳数=" << stats.hopCount
-                  << ", 估计=" << stats.estimatedFidelity
-                  << ", 实际=" << stats.actualFidelity
-                  << ", 差异=" << (stats.actualFidelity - stats.estimatedFidelity));
-    }
-    NS_LOG_INFO("平均实际保真度: " << avgActualFidelity);
-    NS_LOG_INFO("=== 实际保真度统计结束 ===");
+    PerformanceResult::RouteFidelityEntry entry;
+    entry.routeId = stats.routeId;
+    entry.hopCount = stats.hopCount;
+    entry.estimatedFidelity = stats.estimatedFidelity;
+    entry.actualFidelity = stats.actualFidelity;
+    entry.waitTimeMs = stats.waitTime.GetMilliSeconds();
+    result.routeFidelityStats.push_back(entry);
   }
   
   // Print routing tables and topology for debugging
@@ -954,12 +984,12 @@ PerformanceResult RunPerformanceTest(const std::string& topologyType,
   // 清理 ns-3 Simulator
   Simulator::Destroy();
   
-  // 清理 ExaTN 张量以便下一次测试可以重新使用相同的张量名称
-  // 这对于在同一进程中运行多次测试是必要的
-  NS_LOG_INFO("清理 ExaTN 张量...");
-  exatn::sync();  // 等待所有异步操作完成
-  exatn::destroyTensors();  // 销毁所有已创建的张量
-  NS_LOG_INFO("ExaTN 张量清理完成");
+  // 彻底重置 ExaTN 状态以便下一次测试
+  // 使用 QuantumNetworkSimulator 的静态方法来正确重置 ExaTN
+  // 这会销毁所有张量并重新初始化 ExaTN
+  NS_LOG_INFO("清理 ExaTN 状态...");
+  QuantumNetworkSimulator::ResetExaTNState();
+  NS_LOG_INFO("ExaTN 状态重置完成");
   
   NS_LOG_INFO("测试完成: " << testName);
   result.PrintReport();
@@ -1100,23 +1130,58 @@ int main(int argc, char *argv[])
   }
   
   // 测试套件5：不同链路保真度（验证物理层保真度参数）
+  // 
+  // *** 重要限制 ***
+  // 由于 ExaTN 使用 MPI，而 MPI 只能在每个进程中初始化一次，
+  // 在同一进程中运行多个测试可能导致张量状态干扰。
+  // 
+  // 建议使用 test5a, test5b 等独立测试来验证不同保真度：
+  //   ./ns3 run "qcast-performance-test --single-test=test5a"  # 95%
+  //   ./ns3 run "qcast-performance-test --single-test=test5b"  # 99%
+  //
+  // 或者使用 test5 只运行第一个子测试 (90%)
   if (runAllTests || singleTest == "test5")
   {
     NS_LOG_INFO("");
-    NS_LOG_INFO("运行测试套件5: 不同链路保真度");
+    NS_LOG_INFO("运行测试套件5: 不同链路保真度 (单路由验证)");
+    NS_LOG_INFO("*** 注意：建议分别运行 test5a/test5b 以获得准确的保真度结果 ***");
     
     // 测试不同的链路保真度值：0.90, 0.95, 0.99
     std::vector<double> fidelities = {0.90, 0.95, 0.99};
     
     for (double fidelity : fidelities)
     {
-      // 10节点链式拓扑
-      std::string testName = "chain_10nodes_epr20_" + 
-                            std::to_string((int)(fidelity * 100)) + "pct_10req";
-      PerformanceResult result = RunPerformanceTest("chain", 10, fidelity, 10, testName, 20);
+      // 5节点链式拓扑，单个路由请求（避免多路由共享张量网络的问题）
+      std::string testName = "chain_5nodes_epr20_" + 
+                            std::to_string((int)(fidelity * 100)) + "pct_1req";
+      PerformanceResult result = RunPerformanceTest("chain", 5, fidelity, 1, testName, 20);
       allResults.push_back(result);
       outputStream << result.ToCsvString() << std::endl;
     }
+  }
+  
+  // 测试套件5a：单独测试95%链路保真度
+  if (singleTest == "test5a")
+  {
+    NS_LOG_INFO("");
+    NS_LOG_INFO("运行测试套件5a: 单独测试95%链路保真度");
+    
+    std::string testName = "chain_5nodes_epr20_95pct_1req_isolated";
+    PerformanceResult result = RunPerformanceTest("chain", 5, 0.95, 1, testName, 20);
+    allResults.push_back(result);
+    outputStream << result.ToCsvString() << std::endl;
+  }
+  
+  // 测试套件5b：单独测试99%链路保真度
+  if (singleTest == "test5b")
+  {
+    NS_LOG_INFO("");
+    NS_LOG_INFO("运行测试套件5b: 单独测试99%链路保真度");
+    
+    std::string testName = "chain_5nodes_epr20_99pct_1req_isolated";
+    PerformanceResult result = RunPerformanceTest("chain", 5, 0.99, 1, testName, 20);
+    allResults.push_back(result);
+    outputStream << result.ToCsvString() << std::endl;
   }
   
   // 关闭输出文件

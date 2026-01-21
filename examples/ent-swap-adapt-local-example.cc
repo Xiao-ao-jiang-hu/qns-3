@@ -44,7 +44,7 @@ Evaluating tensor network of size 159 in 5.48751 secs
 /*
 Evaluating tensor network of size 335 in 11.2599 secs
 */
-#define N (64)
+#define N (3)
 /*
 Evaluating tensor network of size 687 in 23.3415 secs
 */

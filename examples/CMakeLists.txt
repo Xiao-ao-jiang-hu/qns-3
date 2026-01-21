@@ -81,3 +81,10 @@ build_lib_example(
     LIBRARIES_TO_LINK ${libquantum}
 )
 
+# Fidelity test
+build_lib_example(
+    NAME fidelity-test
+    SOURCE_FILES fidelity-test.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+

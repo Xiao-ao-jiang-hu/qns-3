@@ -14,6 +14,7 @@
 #include "ns3/quantum-channel.h"
 #include "ns3/quantum-packet.h"
 #include "ns3/random-variable-stream.h"
+#include <exatn.hpp>
 #include <algorithm>
 #include <cmath>
 
@@ -151,39 +152,141 @@ QCastForwardingEngine::LogTimeSwapScheduling (const QuantumRoute& route)
                << "(vs " << hopCount << " levels in linear scheduling)"
                << ", total classical delay=" << cumulativeDelay.As (Time::MS));
   
-  // Schedule fidelity calculation AFTER all delays have elapsed
+  // Schedule entanglement swaps and end-to-end fidelity calculation
   // This ensures TimeModel applies decoherence based on actual elapsed time
-  if (m_qphyent && !m_currentRouteEprPairs.empty ())
+  // Use route-specific QuantumPhyEntity if available, otherwise fall back to shared one
+  Ptr<QuantumPhyEntity> qphyentToUse = m_currentRouteQphyent ? m_currentRouteQphyent : m_qphyent;
+  
+  if (qphyentToUse && !m_currentRouteEprPairs.empty ())
   {
-    NS_LOG_INFO ("Scheduling fidelity calculation after cumulative delay of " << cumulativeDelay.As (Time::MS)
-                 << " for " << m_currentRouteEprPairs.size () << " EPR pairs");
+    NS_LOG_INFO ("Scheduling entanglement swaps and fidelity calculation after cumulative delay of " 
+                 << cumulativeDelay.As (Time::MS)
+                 << " for " << m_currentRouteEprPairs.size () << " EPR pairs"
+                 << (m_currentRouteQphyent ? " (using dedicated QuantumPhyEntity)" : " (using shared QuantumPhyEntity)"));
     
     // Capture current state for the scheduled callback
     std::vector<std::pair<std::string, std::string>> eprPairs = m_currentRouteEprPairs;
+    std::pair<std::string, std::string> endpoints = m_currentRouteEndpoints;
     uint32_t routeId = route.routeId;
     double estimatedFidelity = route.estimatedFidelity;
     uint32_t hopCountForStats = route.GetHopCount ();
     Time totalDelay = cumulativeDelay;
     
-    // Schedule actual fidelity calculation after the classical delays
-    Simulator::Schedule (cumulativeDelay, [this, eprPairs, routeId, estimatedFidelity, hopCountForStats, totalDelay]() {
-      // Calculate the fidelity of the first EPR pair as a sample
-      // Then extrapolate to chain fidelity: F_chain = F_sample^n
-      // This is a reasonable approximation when all links have similar fidelity
-      // and avoids expensive tensor network contractions for each pair
-      double sampleFidelity = -1.0;
-      size_t numPairs = eprPairs.size ();
+    // Capture the route-specific QuantumPhyEntity by value (Ptr is reference-counted)
+    Ptr<QuantumPhyEntity> routeQphyent = qphyentToUse;
+    
+    // Schedule entanglement swaps and fidelity calculation after the classical delays
+    Simulator::Schedule (cumulativeDelay, [this, eprPairs, endpoints, routeId, estimatedFidelity, hopCountForStats, totalDelay, routeQphyent]() {
+      // Full entanglement swap protocol with Pauli corrections
+      // For a chain A-B-C-D with EPR pairs (a,b1), (b2,c1), (c2,d):
+      // 1. Bell measurements at intermediate nodes
+      // 2. Apply controlled Pauli corrections
+      // 3. Partial trace to remove measured qubits
+      // Result: end-to-end entanglement between endpoints.first (a) and endpoints.second (d)
       
-      if (!eprPairs.empty ())
+      size_t numSwaps = eprPairs.size () - 1;
+      NS_LOG_INFO ("Performing " << numSwaps << " entanglement swaps for route " << routeId);
+      
+      if (numSwaps == 0)
       {
-        sampleFidelity = CalculateActualFidelity (eprPairs[0]);
-        NS_LOG_LOGIC ("Sample EPR pair fidelity = " << sampleFidelity);
+        // Single hop: no swap needed, just measure fidelity of the EPR pair
+        double fidel = 0.0;
+        double actualFidelity = routeQphyent->CalculateFidelity (eprPairs[0], fidel);
+        
+        ActualFidelityStats stats;
+        stats.routeId = routeId;
+        stats.estimatedFidelity = estimatedFidelity;
+        stats.actualFidelity = actualFidelity;
+        stats.hopCount = hopCountForStats;
+        stats.establishmentTime = Simulator::Now ();
+        stats.waitTime = totalDelay;
+        m_actualFidelityStats.push_back (stats);
+        
+        NS_LOG_INFO ("Single-hop fidelity for route " << routeId << ": " << actualFidelity);
+        return;
       }
       
-      // Extrapolate to chain fidelity
-      double actualFidelity = (sampleFidelity >= 0.0 && numPairs > 0) 
-                             ? std::pow (sampleFidelity, numPairs) 
-                             : -1.0;
+      // For multi-hop routes, perform entanglement swaps with measurement-based protocol
+      // This simulates the real physical process:
+      // 1. Each intermediate node holds two qubits (one from each adjacent EPR pair)
+      // 2. Bell measurement: CNOT(latter, former) + H(former) + Measure both
+      // 3. After measurement, the measured qubits are discarded from quantum memory
+      // 4. Pauli corrections are applied to the target qubit based on measurement results
+      // 5. Final state: only source and destination nodes hold qubits (end-to-end entanglement)
+      
+      // Target qubit for all corrections is the destination node's qubit
+      std::string targetQubit = endpoints.second;
+      
+      // Accumulate XOR of measurement results for final Pauli correction
+      unsigned flagX = 0;  // Controls X correction (from latter qubit measurements)
+      unsigned flagZ = 0;  // Controls Z correction (from former qubit measurements after H)
+      
+      for (size_t i = 0; i < numSwaps; ++i)
+      {
+        // At intermediate node i+1:
+        // - qubitFormer = qubit from EPR pair i (connected to node i, the "left" neighbor)
+        // - qubitLatter = qubit from EPR pair i+1 (connected to node i+2, the "right" neighbor)
+        // These two qubits are stored in the quantum memory of node i+1
+        std::string qubitFormer = eprPairs[i].second;      // Right qubit of pair i
+        std::string qubitLatter = eprPairs[i + 1].first;   // Left qubit of pair i+1
+        
+        NS_LOG_INFO ("Swap " << i << ": Intermediate node performs Bell measurement");
+        NS_LOG_INFO ("  Former qubit (from left): " << qubitFormer);
+        NS_LOG_INFO ("  Latter qubit (from right): " << qubitLatter);
+        
+        // Bell measurement circuit: CNOT(control=latter, target=former) + H(former)
+        routeQphyent->ApplyGate ("God", QNS_GATE_PREFIX + "CNOT", {}, {qubitLatter, qubitFormer});
+        routeQphyent->ApplyGate ("God", QNS_GATE_PREFIX + "H", {}, {qubitFormer});
+        
+        // Perform computational basis measurements on both qubits
+        auto outcome0 = routeQphyent->Measure ("God", {qubitFormer});  // Result determines Z correction
+        auto outcome1 = routeQphyent->Measure ("God", {qubitLatter});  // Result determines X correction
+        
+        NS_LOG_INFO ("  Measurement results: m0=" << outcome0.first << " (Z), m1=" << outcome1.first << " (X)");
+        
+        // Discard measured qubits from quantum memory (partial trace)
+        routeQphyent->PartialTrace ({qubitFormer, qubitLatter});
+        
+        // Accumulate XOR of measurement outcomes for final correction
+        flagZ ^= outcome0.first;
+        flagX ^= outcome1.first;
+        
+        m_stats.entanglementSwaps++;
+      }
+      
+      // Apply accumulated Pauli corrections to the destination node's qubit
+      // This simulates the classical communication of measurement results and correction
+      NS_LOG_INFO ("Applying Pauli corrections to target qubit: flagX=" << flagX << ", flagZ=" << flagZ);
+      
+      if (flagX == 1)
+      {
+        routeQphyent->ApplyGate ("God", QNS_GATE_PREFIX + "PX", {}, {targetQubit});
+      }
+      
+      if (flagZ == 1)
+      {
+        routeQphyent->ApplyGate ("God", QNS_GATE_PREFIX + "PZ", {}, {targetQubit});
+      }
+      
+      // Calculate end-to-end fidelity
+      // At this point, only source qubit (endpoints.first) and destination qubit (endpoints.second) remain
+      double actualFidelity = -1.0;
+      
+      if (!endpoints.first.empty () && !endpoints.second.empty ())
+      {
+        NS_LOG_INFO ("Calculating end-to-end fidelity between:");
+        NS_LOG_INFO ("  Source qubit: " << endpoints.first);
+        NS_LOG_INFO ("  Destination qubit: " << endpoints.second);
+        
+        double fidel = 0.0;
+        actualFidelity = routeQphyent->CalculateFidelity (endpoints, fidel);
+        
+        NS_LOG_INFO ("End-to-end fidelity (physics layer): " << actualFidelity);
+      }
+      else
+      {
+        NS_LOG_WARN ("Endpoints not set, cannot calculate end-to-end fidelity");
+      }
       
       // Record actual fidelity statistics
       ActualFidelityStats stats;
@@ -196,16 +299,22 @@ QCastForwardingEngine::LogTimeSwapScheduling (const QuantumRoute& route)
       
       m_actualFidelityStats.push_back (stats);
       
-      NS_LOG_INFO ("Chain fidelity (after " << totalDelay.As (Time::MS) << " delay) for route " << routeId 
+      NS_LOG_INFO ("End-to-end fidelity (after " << totalDelay.As (Time::MS) << " delay) for route " << routeId 
                    << ": estimated=" << estimatedFidelity
                    << ", actual=" << actualFidelity
-                   << " (sample=" << sampleFidelity << "^" << numPairs << ")"
                    << ", hops=" << hopCountForStats);
+      
+      // Note: ExaTN tensor cleanup is now handled at test completion
+      // (after Simulator::Destroy()) to avoid interference with concurrent routes
+      NS_LOG_INFO ("Route " << routeId << " fidelity calculation completed");
     });
     
-    // Clear the EPR pairs to avoid duplicate calculations
+    // Clear the route state to avoid duplicate calculations
+    // Note: routeQphyent will be automatically cleaned up after the lambda completes
+    // (it's captured by value as a Ptr, so reference count will drop to 0)
     m_currentRouteEprPairs.clear ();
     m_currentRouteEndpoints = std::make_pair ("", "");
+    m_currentRouteQphyent = nullptr;  // Release the reference
   }
 }
 
@@ -378,6 +487,46 @@ QCastForwardingEngine::EstablishEntanglement (const QuantumRoute& route)
   // Record establishment start time for actual fidelity calculation
   Time establishmentStartTime = Simulator::Now ();
   
+  // Create a dedicated QuantumPhyEntity for this route to avoid tensor network interference
+  // Each route gets its own isolated tensor network for correct fidelity calculation
+  Ptr<QuantumPhyEntity> routeQphyent = nullptr;
+  if (m_qphyent)
+  {
+    // Note: ExaTN tensor cleanup is now handled at test completion
+    // With unique tensor names (via static counter), we don't need to destroy
+    // tensors mid-simulation. This avoids interfering with ExaTN's internal state.
+    
+    // Collect all node names that will be involved in this route
+    std::vector<std::string> routeOwners;
+    if (!route.nodeSequence.empty ())
+    {
+      for (const auto& node : route.nodeSequence)
+      {
+        routeOwners.push_back (node);
+      }
+    }
+    else
+    {
+      // Fallback: use channel owners
+      for (const auto& channel : route.path)
+      {
+        if (std::find (routeOwners.begin (), routeOwners.end (), channel->GetSrcOwner ()) == routeOwners.end ())
+        {
+          routeOwners.push_back (channel->GetSrcOwner ());
+        }
+        if (std::find (routeOwners.begin (), routeOwners.end (), channel->GetDstOwner ()) == routeOwners.end ())
+        {
+          routeOwners.push_back (channel->GetDstOwner ());
+        }
+      }
+    }
+    
+    // Create isolated QuantumPhyEntity for this route
+    routeQphyent = CreateObject<QuantumPhyEntity> (routeOwners);
+    NS_LOG_INFO ("Created dedicated QuantumPhyEntity for route " << route.routeId 
+                 << " with " << routeOwners.size () << " owners");
+  }
+  
   // Distribute EPR pairs along the path
   // Use unique EPR pair names with route ID and timestamp to avoid tensor name conflicts
   static uint64_t eprCounter = 0;
@@ -465,7 +614,17 @@ QCastForwardingEngine::EstablishEntanglement (const QuantumRoute& route)
       
       NS_LOG_INFO ("Distributing EPR pair for hop " << i << ": " << srcNode << " -> " << dstNode);
       
-      if (!DistributeEPR (channel, epr))
+      // Generate EPR pair using the route-specific QuantumPhyEntity
+      if (routeQphyent && channel)
+      {
+        double channelFidelity = channel->GetFidelity (m_qphyent);
+        NS_LOG_INFO ("Channel fidelity: " << channelFidelity);
+        
+        std::vector<std::complex<double>> epr_dm = GetEPRwithFidelity (channelFidelity);
+        routeQphyent->GenerateQubitsMixed (srcNode, epr_dm, {epr.first, epr.second});
+        NS_LOG_INFO ("EPR pair generated with fidelity " << channelFidelity);
+      }
+      else if (!DistributeEPR (channel, epr))
       {
         NS_LOG_WARN ("Failed to distribute EPR pair on channel "
                      << srcNode << " -> " << dstNode);
@@ -502,7 +661,17 @@ QCastForwardingEngine::EstablishEntanglement (const QuantumRoute& route)
         destQubit = qubit2;  // Destination node's qubit
       }
       
-      if (!DistributeEPR (channel, epr))
+      // Generate EPR pair using the route-specific QuantumPhyEntity
+      if (routeQphyent && channel)
+      {
+        double channelFidelity = channel->GetFidelity (m_qphyent);
+        NS_LOG_INFO ("Channel fidelity: " << channelFidelity);
+        
+        std::vector<std::complex<double>> epr_dm = GetEPRwithFidelity (channelFidelity);
+        routeQphyent->GenerateQubitsMixed (channel->GetSrcOwner (), epr_dm, {epr.first, epr.second});
+        NS_LOG_INFO ("EPR pair generated with fidelity " << channelFidelity);
+      }
+      else if (!DistributeEPR (channel, epr))
       {
         NS_LOG_WARN ("Failed to distribute EPR pair on channel "
                      << channel->GetSrcOwner () << " -> " << channel->GetDstOwner ());
@@ -514,15 +683,26 @@ QCastForwardingEngine::EstablishEntanglement (const QuantumRoute& route)
   NS_LOG_LOGIC ("Entanglement established along route with " << hopCount << " hops");
   m_stats.eprPairsDistributed += hopCount;
   
-  // Store endpoint qubits for fidelity calculation after log-time swap scheduling
+  // Store endpoint qubits and route-specific QuantumPhyEntity for fidelity calculation 
+  // after log-time swap scheduling
   // The actual fidelity calculation is now done in LogTimeSwapScheduling() 
   // AFTER classical delays have elapsed, so TimeModel can apply actual decoherence
-  if (m_qphyent && !sourceQubit.empty () && !destQubit.empty ())
+  if (routeQphyent && !sourceQubit.empty () && !destQubit.empty ())
   {
     m_currentRouteEndpoints = std::make_pair (sourceQubit, destQubit);
+    m_currentRouteQphyent = routeQphyent;  // Store route-specific physics entity
     NS_LOG_INFO ("Stored endpoint qubits for delayed fidelity calculation: " 
                  << sourceQubit << " -> " << destQubit
-                 << " (" << m_currentRouteEprPairs.size () << " EPR pairs)");
+                 << " (" << m_currentRouteEprPairs.size () << " EPR pairs)"
+                 << " with dedicated QuantumPhyEntity");
+  }
+  else if (m_qphyent && !sourceQubit.empty () && !destQubit.empty ())
+  {
+    // Fallback to shared QuantumPhyEntity (for backward compatibility)
+    m_currentRouteEndpoints = std::make_pair (sourceQubit, destQubit);
+    m_currentRouteQphyent = nullptr;
+    NS_LOG_INFO ("Stored endpoint qubits (using shared QuantumPhyEntity): " 
+                 << sourceQubit << " -> " << destQubit);
   }
   
   return true;
@@ -539,24 +719,25 @@ QCastForwardingEngine::PerformEntanglementSwap (const std::vector<std::string>& 
     return false;
   }
   
-  NS_LOG_INFO ("Performing entanglement swap with qubits: ");
-  for (const auto& qubit : qubits)
-  {
-    NS_LOG_INFO ("  " << qubit);
-  }
+  NS_LOG_INFO ("Performing entanglement swap with qubits: " << qubits[0] << ", " << qubits[1]);
   
   // Check if physics layer is enabled
   if (m_qphyent && qubits.size () >= 2)
   {
     NS_LOG_INFO ("Physics layer enabled, performing actual entanglement swap");
     
-    // Entanglement swap circuit:
-    // 1. Apply CNOT gate: control = qubits[1], target = qubits[0]
-    // 2. Apply Hadamard gate: target = qubits[0]
-    // 3. Measure qubits[0] and qubits[1]
-    // 4. Apply corrections based on measurement results
+    // Full entanglement swap protocol:
+    // For EPR pairs (A,B1) and (B2,C), we want to create entanglement between A and C
+    // qubits[0] = B1 (from first EPR pair)
+    // qubits[1] = B2 (from second EPR pair)
+    //
+    // Step 1: Bell measurement on B1, B2 (CNOT + H)
+    // Step 2: Apply controlled Pauli corrections based on measurement results
+    //         This is done using ApplyControlledOperation which applies gates
+    //         conditioned on the classical bits from measurement
+    // Step 3: Partial trace to remove the measured qubits
     
-    // Apply CNOT gate (control on qubit 1, target on qubit 0)
+    // Step 1: Apply CNOT gate (control on qubit 1, target on qubit 0)
     bool cnotSuccess = m_qphyent->ApplyGate (
       "God",  // Use "God" as owner for cross-node operations
       QNS_GATE_PREFIX + "CNOT",
@@ -584,12 +765,7 @@ QCastForwardingEngine::PerformEntanglementSwap (const std::vector<std::string>& 
       return false;
     }
     
-    // Measure both qubits (Bell measurement)
-    // The measurement results would be used for Pauli corrections
-    // For simulation purposes, we use controlled operations instead
-    // which is equivalent and avoids explicit measurement handling
-    
-    NS_LOG_INFO ("Entanglement swap gates applied successfully");
+    NS_LOG_INFO ("Bell measurement gates (CNOT + H) applied successfully");
   }
   else
   {
@@ -618,22 +794,24 @@ QCastForwardingEngine::DistributeEPR (Ptr<QuantumChannel> channel,
   // Check if physics layer is enabled
   if (m_qphyent)
   {
-    NS_LOG_INFO ("Physics layer enabled, calling actual GenerateEPR");
+    NS_LOG_INFO ("Physics layer enabled, generating EPR with depolarizing noise");
     
-    // Generate actual EPR pair using physics layer
-    // This creates a Bell state |Phi+> = (|00> + |11>)/sqrt(2)
-    m_qphyent->GenerateEPR (channel, epr);
+    // Get channel fidelity (set during topology configuration)
+    double channelFidelity = channel->GetFidelity (m_qphyent);
+    NS_LOG_INFO ("Channel fidelity: " << channelFidelity);
     
-    // Apply depolarizing error model (channel noise)
-    // The DepolarModel is already configured on the channel during topology setup
-    std::pair<std::string, std::string> conn = std::make_pair (
-      channel->GetSrcOwner (), channel->GetDstOwner ());
-    m_qphyent->ApplyErrorModel (conn, epr);
+    // Generate EPR pair with depolarizing noise using density matrix
+    // GetEPRwithFidelity returns a Werner state: rho = f|Phi+><Phi+| + (1-f)/3 * (other Bell states)
+    std::vector<std::complex<double>> epr_dm = GetEPRwithFidelity (channelFidelity);
+    
+    // Use GenerateQubitsMixed to create the noisy EPR pair
+    // Note: We use the source owner to generate both qubits (they will be tracked correctly)
+    m_qphyent->GenerateQubitsMixed (channel->GetSrcOwner (), epr_dm, {epr.first, epr.second});
     
     // Track this EPR pair for later fidelity calculation
     m_generatedEprPairs.push_back (epr);
     
-    NS_LOG_INFO ("EPR pair generated and error model applied");
+    NS_LOG_INFO ("EPR pair generated with fidelity " << channelFidelity);
   }
   else
   {

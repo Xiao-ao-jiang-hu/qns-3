@@ -7,6 +7,11 @@ namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE ("QuantumNetworkSimulator");
 
+// Static variable definitions for singleton ExaTN initialization
+unsigned QuantumNetworkSimulator::s_exatn_name_count = 0;
+bool QuantumNetworkSimulator::s_exatn_initialized = false;
+unsigned QuantumNetworkSimulator::s_instance_count = 0;
+
 QuantumNetworkSimulator::QuantumNetworkSimulator (const std::vector<std::string> &owners)
     : m_dm (exatn::TensorNetwork ()),
       m_dm_id (1),
@@ -14,13 +19,18 @@ QuantumNetworkSimulator::QuantumNetworkSimulator (const std::vector<std::string>
       m_qubits_vld (std::vector<std::string> ()),
       m_qubit2tensor (std::map<std::string, std::pair<unsigned, unsigned>> ()),
       m_qubit2tensor_dag (std::map<std::string, std::pair<unsigned, unsigned>> ()),
-
-      m_exatn_name_count (0),
       m_exatn_tensors (std::vector<std::string> ())
 {
   /* circuit */
 
-  exatn::initialize ();
+  // Singleton pattern for ExaTN initialization - initialize only once across all instances
+  if (!s_exatn_initialized)
+  {
+    exatn::initialize ();
+    s_exatn_initialized = true;
+    NS_LOG_INFO ("ExaTN initialized (singleton)");
+  }
+  s_instance_count++;
 
   m_dm.rename (AllocExatnName ());
 }
@@ -39,7 +49,14 @@ QuantumNetworkSimulator::QuantumNetworkSimulator (const QuantumNetworkSimulator 
 
 QuantumNetworkSimulator::~QuantumNetworkSimulator ()
 {
-  exatn::finalize ();
+  // Singleton pattern - only finalize ExaTN when the last instance is destroyed
+  s_instance_count--;
+  if (s_instance_count == 0 && s_exatn_initialized)
+  {
+    exatn::finalize ();
+    s_exatn_initialized = false;
+    NS_LOG_INFO ("ExaTN finalized (last instance destroyed)");
+  }
 }
 
 QuantumNetworkSimulator::QuantumNetworkSimulator ()
@@ -50,6 +67,40 @@ QuantumNetworkSimulator::QuantumNetworkSimulator ()
       m_qubit2tensor (std::map<std::string, std::pair<unsigned, unsigned>> ()),
       m_qubit2tensor_dag (std::map<std::string, std::pair<unsigned, unsigned>> ())
 {
+}
+
+void
+QuantumNetworkSimulator::ResetExaTNState ()
+{
+  // Note: We cannot call exatn::finalize() and then exatn::initialize() because
+  // ExaTN uses MPI internally, and MPI can only be initialized once per process.
+  // Instead, we just destroy all tensors but keep incrementing the tensor name counter
+  // to ensure unique names across tests.
+  
+  if (s_exatn_initialized)
+  {
+    NS_LOG_INFO ("Resetting ExaTN tensors between tests (instances: " << s_instance_count 
+                 << ", next tensor id: " << s_exatn_name_count << ")...");
+    exatn::sync ();
+    exatn::destroyTensors ();
+    
+    // Reset instance count since Simulator::Destroy() should have cleaned up objects
+    s_instance_count = 0;
+    
+    // DO NOT reset s_exatn_name_count - keep incrementing to ensure unique names
+    // This is the key insight: even after destroyTensors(), some ExaTN internal
+    // state may still reference old tensor names, causing conflicts
+    
+    NS_LOG_INFO ("ExaTN tensor reset complete (next tensor id: " << s_exatn_name_count << ")");
+  }
+  else
+  {
+    NS_LOG_INFO ("ExaTN not initialized, initializing...");
+    exatn::initialize ();
+    s_exatn_initialized = true;
+    s_instance_count = 0;
+    // Don't reset s_exatn_name_count here either
+  }
 }
 
 TypeId
@@ -69,12 +120,27 @@ void
 QuantumNetworkSimulator::PrepareQubitsPure (const std::string &name,
                                            std::vector<std::complex<double>> data)
 {
+  // Check both local list and ExaTN's actual allocation state
   if (std::find (m_exatn_tensors.begin (), m_exatn_tensors.end (), name) != m_exatn_tensors.end ())
     {
-      NS_LOG_INFO ("Preparing a tensor named \"" << name << "\" for some qubits' state twice. Its okay but data ignored :)");
-      return;
+      if (exatn::tensorAllocated (name))
+        {
+          NS_LOG_INFO ("Preparing a tensor named \"" << name << "\" for some qubits' state twice. Its okay but data ignored :)");
+          return;
+        }
+      // Tensor was destroyed, need to recreate it
+      NS_LOG_LOGIC ("Recreating destroyed qubit tensor \"" << name << "\"");
     }
-  m_exatn_tensors.push_back (name);
+  else
+    {
+      if (exatn::tensorAllocated (name))
+        {
+          NS_LOG_LOGIC ("Found existing qubit tensor \"" << name << "\" in ExaTN");
+          m_exatn_tensors.push_back (name);
+          return;
+        }
+      m_exatn_tensors.push_back (name);
+    }
 
   std::vector<size_t> extents (Log2 (data.size ()), 2);
   assert (exatn::createTensor (name, exatn::TensorElementType::COMPLEX64, extents));
@@ -85,12 +151,27 @@ void
 QuantumNetworkSimulator::PrepareQubitsMixed (const std::string &name,
                                              std::vector<std::complex<double>> data)
 {
+  // Check both local list and ExaTN's actual allocation state
   if (std::find (m_exatn_tensors.begin (), m_exatn_tensors.end (), name) != m_exatn_tensors.end ())
     {
-      NS_LOG_INFO ("Preparing a tensor named \"" << name << "\" for some qubits' state twice. Its okay but data ignored :)");
-      return;
+      if (exatn::tensorAllocated (name))
+        {
+          NS_LOG_INFO ("Preparing a tensor named \"" << name << "\" for some qubits' state twice. Its okay but data ignored :)");
+          return;
+        }
+      // Tensor was destroyed, need to recreate it
+      NS_LOG_LOGIC ("Recreating destroyed qubit tensor \"" << name << "\"");
     }
-  m_exatn_tensors.push_back (name);
+  else
+    {
+      if (exatn::tensorAllocated (name))
+        {
+          NS_LOG_LOGIC ("Found existing qubit tensor \"" << name << "\" in ExaTN");
+          m_exatn_tensors.push_back (name);
+          return;
+        }
+      m_exatn_tensors.push_back (name);
+    }
 
   std::vector<size_t> extents ((Log2 (sqrt (data.size ())) << 1), 2);
   assert (exatn::createTensor (name, exatn::TensorElementType::COMPLEX64, extents));
@@ -101,12 +182,32 @@ void
 QuantumNetworkSimulator::PrepareGate (const std::string &name,
                                       const std::vector<std::complex<double>> &data)
 {
+  // Check both local list and ExaTN's actual allocation state
+  // This is necessary because destroyTensors() may have been called between tests,
+  // invalidating our local tracking but not removing the tensor names from some ExaTN state
   if (std::find (m_exatn_tensors.begin (), m_exatn_tensors.end (), name) != m_exatn_tensors.end ())
     {
-      return;
+      // Already tracked locally - check if actually allocated in ExaTN
+      if (exatn::tensorAllocated (name))
+        {
+          return;  // Tensor exists, nothing to do
+        }
+      // Tensor was destroyed, need to recreate it
+      NS_LOG_LOGIC ("Recreating destroyed gate tensor \"" << name << "\"");
     }
-  NS_LOG_LOGIC ("Preparing a gate named \"" << name << "\"");
-  m_exatn_tensors.push_back (name);
+  else
+    {
+      // Not in local list - check if exists in ExaTN from a previous instance
+      if (exatn::tensorAllocated (name))
+        {
+          // Tensor exists in ExaTN but not in our list - just add to list
+          NS_LOG_LOGIC ("Found existing gate tensor \"" << name << "\" in ExaTN");
+          m_exatn_tensors.push_back (name);
+          return;
+        }
+      NS_LOG_LOGIC ("Preparing a gate named \"" << name << "\"");
+      m_exatn_tensors.push_back (name);
+    }
 
   std::vector<size_t> extents = {};
   for (size_t i = 0; i < (Log2 (sqrt (data.size ())) << 1); ++i)
@@ -1175,7 +1276,7 @@ QuantumNetworkSimulator::CheckValid (const std::vector<std::string> &qubits) con
 std::string
 QuantumNetworkSimulator::AllocExatnName ()
 {
-  return QNS_EXATN_PREFIX + std::to_string (m_exatn_name_count++);
+  return QNS_EXATN_PREFIX + std::to_string (s_exatn_name_count++);
 }
 
 
