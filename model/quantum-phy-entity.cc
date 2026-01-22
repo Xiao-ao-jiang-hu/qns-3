@@ -471,4 +471,21 @@ QuantumPhyEntity::PrintConn2Apps () const
     }
 }
 
+Time
+QuantumPhyEntity::GetQubitTimestamp (const std::string &qubit) const
+{
+  auto it = m_qubit2time.find (qubit);
+  if (it != m_qubit2time.end ())
+    {
+      return it->second;
+    }
+  return Seconds (-1);  // Invalid
+}
+
+void
+QuantumPhyEntity::SetQubitTimestamp (const std::string &qubit, const Time &time)
+{
+  m_qubit2time[qubit] = time;
+}
+
 } // namespace ns3

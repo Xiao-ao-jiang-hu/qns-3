@@ -339,6 +339,20 @@ public:
   */
   void Checkpoint ();
 
+  /**
+   * \brief Get the timestamp of a qubit.
+   * \param qubit Name of the qubit.
+   * \return Last operation time of the qubit.
+   */
+  Time GetQubitTimestamp (const std::string &qubit) const;
+
+  /**
+   * \brief Update the timestamp of a qubit.
+   * \param qubit Name of the qubit.
+   * \param time New timestamp.
+   */
+  void SetQubitTimestamp (const std::string &qubit, const Time &time);
+
 
 /* debug */
   

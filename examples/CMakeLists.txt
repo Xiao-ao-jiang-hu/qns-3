@@ -1,30 +1,6 @@
 # teleportation
 
 build_lib_example(
-    NAME telep-app-example
-    SOURCE_FILES telep-app-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
-    NAME telep-app-repeat-example
-    SOURCE_FILES telep-app-repeat-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
-    NAME msg-flow-example
-    SOURCE_FILES msg-flow-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
-    NAME telep-adapt-example
-    SOURCE_FILES telep-adapt-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
     NAME telep-lin-example
     SOURCE_FILES telep-lin-example.cc
     LIBRARIES_TO_LINK ${libquantum}
@@ -59,24 +35,6 @@ build_lib_example(
 # distillation
 
 build_lib_example(
-    NAME distill-app-example
-    SOURCE_FILES distill-app-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
-    NAME distill-app-repeat-example
-    SOURCE_FILES distill-app-repeat-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
-    NAME distill-adapt-example
-    SOURCE_FILES distill-adapt-example.cc
-    LIBRARIES_TO_LINK ${libquantum}
-)
-
-build_lib_example(
     NAME distill-nested-example
     SOURCE_FILES distill-nested-example.cc
     LIBRARIES_TO_LINK ${libquantum}
@@ -88,3 +46,18 @@ build_lib_example(
     LIBRARIES_TO_LINK ${libquantum}
 )
 
+# decoherence test
+
+build_lib_example(
+    NAME decoherence-test
+    SOURCE_FILES decoherence-test.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+# four-node chain test
+
+build_lib_example(
+    NAME four-node-chain-test
+    SOURCE_FILES four-node-chain-test.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)

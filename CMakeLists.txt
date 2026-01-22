@@ -25,6 +25,7 @@ build_lib(
                 model/quantum-phy-entity.cc
                 model/qubit.cc
                 model/quantum-memory.cc
+                model/quantum-memory-model.cc
                 model/quantum-node.cc
                 model/quantum-channel.cc
 
@@ -59,6 +60,7 @@ build_lib(
                 model/quantum-phy-entity.h
                 model/qubit.h
                 model/quantum-memory.h
+                model/quantum-memory-model.h
                 model/quantum-node.h
                 model/quantum-channel.h
 
