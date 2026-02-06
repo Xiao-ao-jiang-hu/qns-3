@@ -10,7 +10,7 @@ if(${ENABLE_EXAMPLES})
         )
 endif()
 
-set(ExaTN_DIR ~/.exatn) # Your exatn install path
+set(ExaTN_DIR $ENV{HOME}/.exatn) # Your exatn install path
 find_package(ExaTN REQUIRED)
 
 # include_directories(SYSTEM ${EXATN_INCLUDE_DIRS} ${EXATN_INCLUDE_ROOT})
