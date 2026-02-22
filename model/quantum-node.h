@@ -85,8 +85,21 @@ public:
    * \brief Check if a qubit is in the node's quantum memory.
    * \param name Name of the qubit to be checked.
    * \return True if the qubit is in the quantum memory.
-  */
+   */
   bool OwnQubit (const std::string &name) const;
+
+  /**
+   * \brief Ensure decoherence is applied to a qubit up to current time.
+   * \param name Name of the qubit.
+   * \note This should be called before any quantum operation on the qubit.
+   */
+  void EnsureDecoherence (const std::string &name);
+
+  /**
+   * \brief Get the quantum memory of the node.
+   * \return Pointer to the quantum memory.
+   */
+  QuantumMemory* GetQuantumMemory ();
 
 
   /**

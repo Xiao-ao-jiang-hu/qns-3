@@ -254,13 +254,39 @@ public:
   void SetTimeModel (const std::string &owner,
                      double rate
   );
-  /**
+/**
    * \brief Apply a time model for n qubits.
    * \param qubits Names of the qubits.
    * \param moment Time of the appliance.
-  */
+   */
   void ApplyErrorModel (const std::vector<std::string> &qubits,
                         const Time &moment = Simulator::Now ());
+
+  /**
+   * \brief Set the last operation time for a qubit.
+   * \param qubit Name of the qubit.
+   * \param time The time to set.
+   */
+  void SetQubitTime (const std::string &qubit, const Time &time);
+
+  /**
+   * \brief Get the last operation time for a qubit.
+   * \param qubit Name of the qubit.
+   * \return The last operation time.
+   */
+  Time GetQubitTime (const std::string &qubit) const;
+
+  /**
+   * \brief Get the error model for a qubit.
+   * \param qubit Name of the qubit.
+   * \return The error model, or nullptr if not found.
+   */
+  Ptr<QuantumErrorModel> GetErrorModel (const std::string &qubit) const;
+
+  /**
+   * \brief Ensure decoherence is applied to all qubits up to current time.
+   */
+  void EnsureAllDecoherence ();
 
 
 /* util */
