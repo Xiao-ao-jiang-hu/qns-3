@@ -181,12 +181,35 @@ Quantum Applications
     ↓
 Quantum Transport Layer
     ↓
-Quantum Network Layer (L3Protocol, Routing)
+Quantum Network Layer (quantum-network-layer.h)
+    - Orchestrates end-to-end path establishment
+    - Delegates routing to pluggable protocols
+    ↓ (via QuantumRoutingProtocol interface)
+Quantum Routing Protocol (quantum-routing-protocol.h)
+    - Abstract interface for routing algorithms
+    - DijkstraRoutingProtocol: Default implementation
+    ↓
+ILinkLayerService (quantum-link-layer-service.h)
+    - Neighbor-to-neighbor entanglement
     ↓
 Quantum Physical Layer (PhyEntity, Memory, Channel)
     ↓
 ExaTN Tensor Network Backend
 ```
+
+**Important**: The network layer (`QuantumNetworkLayer`) does NOT implement routing algorithms directly. Instead, it delegates all routing decisions to a pluggable `QuantumRoutingProtocol` interface. This separation allows different routing strategies to be used interchangeably without modifying the network layer.
+
+See `doc/implementation.md` for detailed implementation documentation including:
+- Complete class interfaces and APIs
+- Design philosophy and principles
+- Workflow details
+- Extension guidelines
+
+## Documentation
+
+- **This file (AGENTS.md)**: Build instructions, code style, quick reference
+- **doc/implementation.md**: Detailed implementation documentation, class specifications
+- **doc/quantum-network-layer.md**: Network layer design documentation
 
 ## Common Issues
 

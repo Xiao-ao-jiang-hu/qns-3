@@ -27,7 +27,10 @@ build_lib(
                 model/quantum-memory.cc
                 model/quantum-node.cc
                 model/quantum-channel.cc
-
+                model/quantum-link-layer-service.cc
+                model/quantum-network-layer.cc
+                model/quantum-routing-protocol.cc
+                model/q-cast-routing-protocol.cc
                 model/distribute-epr-protocol.cc
                 model/telep-app.cc
                 model/telep-adapt-app.cc
@@ -51,6 +54,8 @@ build_lib(
                 helper/distill-helper.cc
                 helper/distill-nested-helper.cc
                 helper/distill-nested-adapt-helper.cc
+                helper/quantum-topology-helper.cc
+                model/quantum-delay-model.cc
     HEADER_FILES
                 model/quantum-basis.h
                 model/quantum-network-simulator.h
@@ -61,6 +66,9 @@ build_lib(
                 model/quantum-memory.h
                 model/quantum-node.h
                 model/quantum-channel.h
+                model/quantum-link-layer-service.h
+                model/quantum-network-layer.h
+                model/quantum-delay-model.h
 
                 model/distribute-epr-protocol.h
                 model/telep-app.h
@@ -72,6 +80,8 @@ build_lib(
                 model/distill-app.h
                 model/distill-nested-app.h
                 model/distill-nested-adapt-app.h
+                model/quantum-routing-protocol.h
+                model/q-cast-routing-protocol.h
                 
                 helper/quantum-basis-helper.h
                 helper/quantum-net-stack-helper.h
@@ -85,6 +95,7 @@ build_lib(
                 helper/distill-helper.h
                 helper/distill-nested-helper.h
                 helper/distill-nested-adapt-helper.h
+                helper/quantum-topology-helper.h
 
 
     LIBRARIES_TO_LINK ${libcore}

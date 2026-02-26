@@ -51,3 +51,31 @@ build_lib_example(
     SOURCE_FILES swap-fidelity-test.cc
     LIBRARIES_TO_LINK ${libquantum}
 )
+
+# quantum network layer
+
+build_lib_example(
+    NAME quantum-network-layer-example
+    SOURCE_FILES quantum-network-layer-example.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+# Q-CAST routing
+
+build_lib_example(
+    NAME q-cast-example
+    SOURCE_FILES q-cast-example.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+build_lib_example(
+    NAME q-cast-random-topology-example
+    SOURCE_FILES q-cast-random-topology-example.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+build_lib_example(
+    NAME q-cast-dynamic-delay-example
+    SOURCE_FILES q-cast-dynamic-delay-example.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
