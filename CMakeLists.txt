@@ -31,6 +31,7 @@ build_lib(
                 model/quantum-network-layer.cc
                 model/quantum-routing-protocol.cc
                 model/q-cast-routing-protocol.cc
+                model/dijkstra-routing-protocol.cc
                 model/distribute-epr-protocol.cc
                 model/telep-app.cc
                 model/telep-adapt-app.cc
@@ -56,6 +57,7 @@ build_lib(
                 helper/distill-nested-adapt-helper.cc
                 helper/quantum-topology-helper.cc
                 model/quantum-delay-model.cc
+                model/quantum-signaling-channel.cc
     HEADER_FILES
                 model/quantum-basis.h
                 model/quantum-network-simulator.h
@@ -69,6 +71,7 @@ build_lib(
                 model/quantum-link-layer-service.h
                 model/quantum-network-layer.h
                 model/quantum-delay-model.h
+                model/quantum-signaling-channel.h
 
                 model/distribute-epr-protocol.h
                 model/telep-app.h
@@ -82,6 +85,7 @@ build_lib(
                 model/distill-nested-adapt-app.h
                 model/quantum-routing-protocol.h
                 model/q-cast-routing-protocol.h
+                model/dijkstra-routing-protocol.h
                 
                 helper/quantum-basis-helper.h
                 helper/quantum-net-stack-helper.h

@@ -8,17 +8,43 @@
 **Language**: C++ (C++20)  
 **Build**: CMake via ns3 wrapper
 
+## Build Environment
+
+### Compiler: gcc-11.5.0 at /usr/local
+
+The project **must** be built with `gcc-11.5.0` located at `/usr/local/gcc-11.5.0/`.  
+Do **not** use the system gcc (Debian 14.x at `/usr/bin/gcc`) — it produces binaries that are
+incompatible with the ExaTN shared libraries.
+
+### Run as non-root (wst user)
+
+`./ns3` refuses to run as root. Use the `wst` user:
+```bash
+su -s /bin/bash wst -c "cd /home/wst/Documents/ns-3.42/ns-3.42 && ./ns3 run <example>"
+```
+
+### Running compiled binaries directly
+
+Because the binaries embed an RPATH pointing to `/usr/local/gcc-11.5.0/lib64/libstdc++.so.6`
+(which is an older version), you must override the library search path when running them directly:
+```bash
+LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:./build/lib ./build/contrib/quantum/examples/...
+```
+Using `./ns3 run` as the `wst` user handles this automatically.
+
 ## Build Commands
 
 ```bash
-# Configure (from ns-3.42 root)
-./ns3 configure --enable-examples --enable-tests
+# Configure (from ns-3.42 root) — run as wst
+su -s /bin/bash wst -c "cd /home/wst/Documents/ns-3.42/ns-3.42 && ./ns3 configure --enable-examples --enable-tests"
 
 # Build
-./ns3 build
+su -s /bin/bash wst -c "cd /home/wst/Documents/ns-3.42/ns-3.42 && /usr/bin/cmake --build cmake-cache -j 15"
+# or via wrapper:
+su -s /bin/bash wst -c "cd /home/wst/Documents/ns-3.42/ns-3.42 && ./ns3 build"
 
 # Clean
-./ns3 clean
+su -s /bin/bash wst -c "cd /home/wst/Documents/ns-3.42/ns-3.42 && ./ns3 clean"
 ```
 
 **Prerequisites**: gcc-11, Python 3.6-3.10 (NOT 3.11), CMake 3.13+, OpenBLAS, OpenMPI, ExaTN at `~/.exatn`
@@ -42,13 +68,26 @@
 ## Run Examples
 
 ```bash
-./ns3 run telep-lin-example
-./ns3 run ent-swap-example
-./ns3 run distill-nested-example
+# Must run as wst user (not root)
+su -s /bin/bash wst -c "cd /home/wst/Documents/ns-3.42/ns-3.42 && ./ns3 run telep-lin-example"
+su -s /bin/bash wst -c "cd /home/wst/Documents/ns-3.42/ns-3.42 && ./ns3 run ent-swap-example"
+su -s /bin/bash wst -c "cd /home/wst/Documents/ns-3.42/ns-3.42 && ./ns3 run distill-nested-example"
 
 # With debug logging
-NS_LOG="QuantumNetworkSimulator=info:QuantumPhyEntity=info|logic" ./ns3 run telep-lin-example
+NS_LOG="QuantumNetworkSimulator=info:QuantumPhyEntity=info|logic" \
+  su -s /bin/bash wst -c "cd /home/wst/Documents/ns-3.42/ns-3.42 && ./ns3 run telep-lin-example"
+
+# Q-CAST Examples (random topology + delay + fidelity recording)
+su -s /bin/bash wst -c "cd /home/wst/Documents/ns-3.42/ns-3.42 && \
+  NS_LOG='QCastRandomTopologyExample=info' \
+  ./ns3 run 'q-cast-random-topology-example --numNodes=10 --numRequests=5 --topologyType=1'"
+
+# Signaling Delay Example (multi-run simulation)
+su -s /bin/bash wst -c "cd /home/wst/Documents/ns-3.42/ns-3.42 && \
+  ./ns3 run signaling-delay-example -- --numRuns=10 --numNodes=5 --packetLossProb=0.05"
 ```
+
+**Topology types**: `0`=RandomGeometric, `1`=ErdosRenyi, `2`=ScaleFree, `3`=GridRandom (dynamic only)
 
 ## Code Style
 
@@ -217,3 +256,23 @@ See `doc/implementation.md` for detailed implementation documentation including:
 - **Python version**: Use < 3.11 for ExaTN build
 - **Link errors**: Missing entry in CMakeLists.txt
 - **Test failures**: Check test case names match suite
+- **Cannot run as root**: Use `su -s /bin/bash wst -c "..."` or `su - wst`
+- **libstdc++ version mismatch** (`GLIBCXX_3.4.31/32 not found`): Binary RPATH points to
+  `/usr/local/gcc-11.5.0/lib64/libstdc++.so.6` (old). Fix: either use `./ns3 run` as wst
+  (which sets env correctly), or prepend `LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu`.
+- **`QuantumNetworkLayer` is not an `Application`**: Never call
+  `node->AddApplication(netLayer)` — it will fail to compile. `QuantumNetworkLayer` is
+  initialized via `netLayer->Initialize()` directly, not through the Application scheduler.
+- **`CommandLine` not declared**: Add `#include "ns3/core-module.h"` (not just csma/internet
+  modules) to examples that use `CommandLine cmd`.
+- **Incomplete type `DistributeEPRSrcProtocol`**: Add
+  `#include "ns3/distribute-epr-protocol.h"` to files that call methods on this type.
+- **Q-CAST only finds 1-hop paths**: By default `QCastRoutingProtocol::CalculateRoutesGEDA`
+  and `ExtendedDijkstra` only know about the local node's direct neighbors (from
+  `m_networkLayer->GetNeighbors()`). To enable multi-hop discovery, call
+  `routingProtocol->UpdateTopology(fullTopology)` after construction, passing a
+  `map<string, map<string, LinkMetrics>>` that covers **all** edges in the network.
+  The fixed `q-cast-random-topology-example.cc` does this in "Step 5b": it iterates the
+  topology helper's edge list and calls `routingProtocols[0]->UpdateTopology(...)`.
+  The routing algorithm then expands via `m_linkProbabilities` (global) instead of the
+  local neighbor map, producing correct multi-hop paths.

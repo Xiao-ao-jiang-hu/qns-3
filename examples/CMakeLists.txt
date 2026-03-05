@@ -79,3 +79,31 @@ build_lib_example(
     SOURCE_FILES q-cast-dynamic-delay-example.cc
     LIBRARIES_TO_LINK ${libquantum}
 )
+
+# signaling delay simulation
+
+build_lib_example(
+    NAME signaling-delay-example
+    SOURCE_FILES signaling-delay-example.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+# routing comparison
+
+build_lib_example(
+    NAME routing-comparison-example
+    SOURCE_FILES routing-comparison-example.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+build_lib_example(
+    NAME routing-detailed-analysis
+    SOURCE_FILES routing-detailed-analysis.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+build_lib_example(
+    NAME dijkstra-vs-qcast
+    SOURCE_FILES dijkstra-vs-qcast.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
