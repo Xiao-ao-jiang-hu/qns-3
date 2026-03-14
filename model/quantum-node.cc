@@ -120,6 +120,21 @@ QuantumNode::OwnQubit (const std::string &name) const
 }
 
 void
+QuantumNode::EnsureDecoherence (const std::string &name)
+{
+  if (OwnQubit (name))
+    {
+      m_qmemory.EnsureDecoherence (name);
+    }
+}
+
+QuantumMemory*
+QuantumNode::GetQuantumMemory ()
+{
+  return &m_qmemory;
+}
+
+void
 QuantumNode::SetErrorModel (Ptr<QuantumErrorModel> pmodel, const std::string &qubit)
 {
   m_qphyent->SetErrorModel (pmodel, qubit);

@@ -83,6 +83,9 @@ QuantumPhyEntity::GenerateQubitsPure (
 
   Ptr<QuantumNode> pnode = m_owner2pnode[owner];
 
+  // Set the physical entity pointer for the node's quantum memory
+  pnode->GetQuantumMemory ()->SetPhyEntity (this);
+
   for (unsigned i = 0; i < qubits.size (); ++i)
     {
       std::string qubit = qubits[i];
@@ -120,6 +123,9 @@ QuantumPhyEntity::GenerateQubitsMixed (
 
   Ptr<QuantumNode> pnode = m_owner2pnode[owner];
 
+  // Set the physical entity pointer for the node's quantum memory
+  pnode->GetQuantumMemory ()->SetPhyEntity (this);
+
   for (unsigned i = 0; i < qubits.size (); ++i)
     {
       std::string qubit = qubits[i];
@@ -151,9 +157,12 @@ QuantumPhyEntity::ApplyGate (
   Time moment = Simulator::Now ();
   assert (CheckOwned (owner, qubits));
 
+  Ptr<QuantumNode> pnode = m_owner2pnode[owner];
   for (const std::string &qubit : qubits)
     {
       NS_LOG_LOGIC ("Updating qubit " << qubit);
+      // Ensure decoherence is applied up to current time before operation
+      pnode->EnsureDecoherence (qubit);
       ApplyErrorModel ({qubit}, moment);
     }
 
@@ -206,6 +215,14 @@ QuantumPhyEntity::Measure (const std::string &owner, const std::vector<std::stri
 {
   Time moment = Simulator::Now ();
   assert (CheckOwned (owner, qubits));
+
+  // Ensure decoherence is applied to all qubits being measured
+  Ptr<QuantumNode> pnode = m_owner2pnode[owner];
+  for (const std::string &qubit : qubits)
+    {
+      pnode->EnsureDecoherence (qubit);
+    }
+
   for (const std::string &q : m_qnetsim.m_qubits_all)
     {
       if (!CheckValid ({q}))
@@ -239,8 +256,19 @@ QuantumPhyEntity::PartialTrace (
 )
 {
   Time moment = Simulator::Now ();
+
+  // Ensure decoherence is applied to all qubits before partial trace
   for (const std::string &qubit : qubits)
     {
+      // Find owner of this qubit and apply decoherence
+      for (const auto& [owner, pnode] : m_owner2pnode)
+        {
+          if (pnode->OwnQubit (qubit))
+            {
+              pnode->EnsureDecoherence (qubit);
+              break;
+            }
+        }
       ApplyErrorModel ({qubit}, moment);
     }
 
@@ -364,11 +392,51 @@ QuantumPhyEntity::ApplyErrorModel ( // using TimeModel
 
 
 
+void
+QuantumPhyEntity::SetQubitTime (const std::string &qubit, const Time &time)
+{
+  m_qubit2time[qubit] = time;
+}
+
+Time
+QuantumPhyEntity::GetQubitTime (const std::string &qubit) const
+{
+  auto it = m_qubit2time.find (qubit);
+  if (it == m_qubit2time.end ())
+    {
+      return Seconds (0);
+    }
+  return it->second;
+}
+
+Ptr<QuantumErrorModel>
+QuantumPhyEntity::GetErrorModel (const std::string &qubit) const
+{
+  auto it = m_qubit2model.find (qubit);
+  if (it == m_qubit2model.end ())
+    {
+      return nullptr;
+    }
+  return it->second;
+}
+
+void
+QuantumPhyEntity::EnsureAllDecoherence ()
+{
+  for (const auto& [owner, pnode] : m_owner2pnode)
+    {
+      for (const auto& qubit : pnode->GetQuantumMemory ()->GetQubits ())
+        {
+          pnode->EnsureDecoherence (qubit);
+        }
+    }
+}
+
 /* network */
 
 void
 QuantumPhyEntity::GenerateEPR (Ptr<QuantumChannel> qconn,
-                               const std::pair<std::string, std::string> &epr)
+                                const std::pair<std::string, std::string> &epr)
 {
   NS_LOG_LOGIC ("Generating EPR pair consisting of " << epr.first << " and " << epr.second);
   GenerateQubitsPure (qconn->GetSrcOwner (), q_bell, {epr.first, epr.second});
