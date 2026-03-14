@@ -13,6 +13,8 @@ endif()
 set(ExaTN_DIR $ENV{HOME}/.exatn) # Your exatn install path
 find_package(ExaTN REQUIRED)
 
+link_directories(/usr/lib/gcc/x86_64-linux-gnu/11)
+
 # include_directories(SYSTEM ${EXATN_INCLUDE_DIRS} ${EXATN_INCLUDE_ROOT})
 
 build_lib(
@@ -112,5 +114,5 @@ build_lib(
                  ${examples_as_tests_sources}
 )
 
-target_include_directories(libquantum-obj PUBLIC ${EXATN_INCLUDE_DIRS} ${EXATN_INCLUDE_ROOT})
+target_include_directories(${libquantum-obj} PUBLIC ${EXATN_INCLUDE_DIRS} ${EXATN_INCLUDE_ROOT})
 
