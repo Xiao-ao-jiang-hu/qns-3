@@ -56,6 +56,7 @@ build_lib(
                 helper/distill-nested-helper.cc
                 helper/distill-nested-adapt-helper.cc
                 helper/quantum-topology-helper.cc
+                helper/quantum-mismatch-topology-helper.cc
                 model/quantum-delay-model.cc
                 model/quantum-signaling-channel.cc
     HEADER_FILES
@@ -100,6 +101,7 @@ build_lib(
                 helper/distill-nested-helper.h
                 helper/distill-nested-adapt-helper.h
                 helper/quantum-topology-helper.h
+                helper/quantum-mismatch-topology-helper.h
 
 
     LIBRARIES_TO_LINK ${libcore}
