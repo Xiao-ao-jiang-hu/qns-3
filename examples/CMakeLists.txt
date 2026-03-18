@@ -107,3 +107,8 @@ build_lib_example(
     SOURCE_FILES dijkstra-vs-qcast.cc
     LIBRARIES_TO_LINK ${libquantum}
 )
+build_lib_example(
+    NAME routing-mismatch-example
+    SOURCE_FILES routing-mismatch-example.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)

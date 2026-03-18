@@ -189,71 +189,219 @@ LinkLatencyMs (const LinkStateMap &s, const std::string &u, const std::string &v
     return (it != s.end ()) ? it->second.latencyMs : 0.0;
 }
 
+// ============================================================================
+// Density-matrix-based end-to-end fidelity computation
+//
+// Each EPR link is initialised via the physical layer's GetEPRwithFidelity(f),
+// which returns the exact 4×4 Werner-state density matrix:
+//   ρ = f|Φ+><Φ+| + (1-f)/3 · (I₄ - |Φ+><Φ+|)
+//
+// Operations are then performed directly on these density matrices:
+//
+//  1. Memory decoherence (depolarising channel on one storage qubit):
+//       ρ' = decay·ρ + (1−decay)·I₄/4,  decay = exp(−t/T_coh)
+//     This follows from tracing out and replacing the decohered qubit
+//     with I/2 (maximally mixed), where Tr_A(Werner) = I/2.
+//
+//  2. Entanglement swap at relay (Bell measurement on qubits B,C):
+//       ρ_AD = Σ_k (U_k⊗I) M_k (U_k†⊗I)
+//     where M_k = (I_A⊗<Φ_k|_BC⊗I_D)(ρ_AB⊗ρ_CD)(I_A⊗|Φ_k>_BC⊗I_D)
+//     and U_k ∈ {I, Z, X, XZ} is the Pauli correction applied by Alice
+//     based on the Bell measurement outcome k.  Summing over all k gives
+//     the ensemble average state (which equals the Werner state with the
+//     product of the two Werner parameters).
+//
+//  3. Fidelity: F = <Φ+|ρ_AD|Φ+> computed as a direct inner product.
+//
+// DM2Q: flat 16-element row-major density matrix for a 2-qubit system.
+//       Index: dm[i*4+j] = ρ[i,j], basis {|00>,|01>,|10>,|11>}.
+// ============================================================================
+
+using DM2Q = std::array<std::complex<double>, 16>;
+
+/// Obtain initial 2-qubit Werner-state density matrix from the physical layer.
+static DM2Q
+DM2QFromLink (double fidelity)
+{
+    auto vec = GetEPRwithFidelity (fidelity); // uses physical-layer function
+    DM2Q dm;
+    for (int i = 0; i < 16; ++i)
+        dm[i] = vec[i];
+    return dm;
+}
+
+/// Apply depolarising-channel decoherence on one qubit of the 2-qubit state.
+/// Implements  ρ' = decay·ρ + (1−decay)·I₄/4  (decay = exp(−dtMs/tCohMs)).
+static DM2Q
+DMDepolarizeOneLeg (const DM2Q &dm, double dtMs, double tCohMs)
+{
+    double decay = std::exp (-dtMs / tCohMs);
+    DM2Q result;
+    for (int i = 0; i < 16; ++i)
+    {
+        double mixed = (i / 4 == i % 4) ? 0.25 : 0.0; // I₄/4: only diagonal
+        result[i] = decay * dm[i] + (1.0 - decay) * mixed;
+    }
+    return result;
+}
+
+/// Entanglement swap: takes ρ_AB (first link) and ρ_CD (second link),
+/// performs ideal Bell measurement on qubits B,C with classical corrections,
+/// and returns the resulting 2-qubit density matrix ρ_AD.
+static DM2Q
+DMEntanglementSwap (const DM2Q &rho_AB, const DM2Q &rho_CD)
+{
+    using C = std::complex<double>;
+    const double s = 1.0 / std::sqrt (2.0);
+
+    // Four Bell states in {|00>,|01>,|10>,|11>} computational basis.
+    const C bell[4][4] = {
+        {s, 0, 0,  s},   // |Φ+⟩ = (|00⟩+|11⟩)/√2
+        {s, 0, 0, -s},   // |Φ-⟩ = (|00⟩-|11⟩)/√2
+        {0, s, s,  0},   // |Ψ+⟩ = (|01⟩+|10⟩)/√2
+        {0, s,-s,  0}    // |Ψ-⟩ = (|01⟩-|10⟩)/√2
+    };
+
+    // Pauli correction U_k applied on qubit A based on Bell outcome k.
+    // k=0→I, k=1→Z, k=2→X, k=3→XZ.
+    const C ucorr[4][2][2] = {
+        {{ 1, 0}, { 0, 1}},  // I
+        {{ 1, 0}, { 0,-1}},  // Z
+        {{ 0, 1}, { 1, 0}},  // X
+        {{ 0,-1}, { 1, 0}}   // XZ
+    };
+
+    DM2Q result = {};
+
+    for (int k = 0; k < 4; ++k)
+    {
+        // Compute M_k[a,d; a',d'] = Σ_{b,c,b',c'} conj(bell_k[bc]) · bell_k[b'c']
+        //                            · ρ_AB[ab; a'b'] · ρ_CD[cd; c'd']
+        C Mk[16] = {};
+        for (int a = 0; a < 2; ++a)
+        for (int d = 0; d < 2; ++d)
+        for (int a2 = 0; a2 < 2; ++a2)
+        for (int d2 = 0; d2 < 2; ++d2)
+        {
+            C sum = 0;
+            for (int b  = 0; b  < 2; ++b)
+            for (int c  = 0; c  < 2; ++c)
+            for (int b2 = 0; b2 < 2; ++b2)
+            for (int c2 = 0; c2 < 2; ++c2)
+            {
+                sum += std::conj (bell[k][b * 2 + c]) * bell[k][b2 * 2 + c2]
+                       * rho_AB[(a * 2 + b) * 4 + (a2 * 2 + b2)]
+                       * rho_CD[(c * 2 + d) * 4 + (c2 * 2 + d2)];
+            }
+            Mk[(a * 2 + d) * 4 + (a2 * 2 + d2)] = sum;
+        }
+
+        // Apply correction (U_k⊗I) M_k (U_k†⊗I) and accumulate.
+        for (int ao  = 0; ao  < 2; ++ao)
+        for (int d   = 0; d   < 2; ++d)
+        for (int ao2 = 0; ao2 < 2; ++ao2)
+        for (int d2  = 0; d2  < 2; ++d2)
+        {
+            C sum = 0;
+            for (int a  = 0; a  < 2; ++a)
+            for (int a2 = 0; a2 < 2; ++a2)
+            {
+                sum += ucorr[k][ao][a] * Mk[(a * 2 + d) * 4 + (a2 * 2 + d2)]
+                       * std::conj (ucorr[k][ao2][a2]);
+            }
+            result[(ao * 2 + d) * 4 + (ao2 * 2 + d2)] += sum;
+        }
+    }
+    return result;
+}
+
+/// Compute F = ⟨Φ+|ρ|Φ+⟩ directly from the 2-qubit density matrix.
+static double
+DMBellFidelity (const DM2Q &dm)
+{
+    // |Φ+⟩ = 1/√2 (|00⟩ + |11⟩)  →  only indices 0 and 3 are nonzero (both = 1/√2)
+    // F = 0.5 · (ρ[0,0] + ρ[0,3] + ρ[3,0] + ρ[3,3])
+    std::complex<double> f = 0.5 * (dm[0] + dm[3] + dm[12] + dm[15]);
+    return std::max (0.0, std::min (1.0, f.real ()));
+}
+
+struct DM2QE2E
+{
+    double noMemFidelity;     ///< F without memory decoherence (tCohMs → ∞)
+    double e2eFidelity;       ///< F including sequential memory decoherence
+    double decoherenceFactor; ///< e2eFidelity / noMemFidelity  (≤ 1)
+    double totalDelayMs;      ///< sum of all hop latencies
+};
+
 /**
- * \brief Compute decoherence penalty for a path.
+ * \brief Compute end-to-end fidelity by direct density-matrix simulation.
  *
- * Model: qubits at intermediate nodes wait in quantum memory while subsequent
- * hops are being established.  Qubit at hop-k waits for hops k+1 .. H-1.
- * Decoherence factor per qubit: exp(-wait_ms / T_coh_ms).
- * Total factor: product over all intermediate qubits.
+ * For each hop the link DM is obtained via the physical-layer function
+ * GetEPRwithFidelity(f).  Memory decoherence and entanglement swapping are
+ * then applied as explicit matrix operations (no closed-form formulae).
  *
- * \param path          List of node names (length = H+1 for H hops)
- * \param linkStates    Per-link realisation
- * \param tCohMs        Memory coherence time [ms]
- * \return {totalDecoherenceFactor, totalPathDelayMs}
+ * \param path       Node list (H+1 nodes for H hops)
+ * \param linkStates Per-link realisation (all links assumed to have succeeded)
+ * \param tCohMs     Quantum-memory coherence time [ms]
  */
-static std::pair<double, double>
-ComputeDecoherence (const std::vector<std::string> &path,
-                    const LinkStateMap &linkStates,
-                    double tCohMs)
+static DM2QE2E
+ComputeE2EFidelityDM (const std::vector<std::string> &path,
+                      const LinkStateMap &linkStates,
+                      double tCohMs)
 {
     if (path.size () < 2)
-        return {1.0, 0.0};
+        return {1.0, 1.0, 1.0, 0.0};
 
-    // Collect per-hop latencies
-    std::vector<double> lat;
-    for (size_t i = 0; i + 1 < path.size (); ++i)
-        lat.push_back (LinkLatencyMs (linkStates, path[i], path[i + 1]));
-
+    size_t H = path.size () - 1;
     double totalDelayMs = 0.0;
-    for (double d : lat)
-        totalDelayMs += d;
+    for (size_t i = 0; i < H; ++i)
+        totalDelayMs += LinkLatencyMs (linkStates, path[i], path[i + 1]);
 
-    // Suffix sums: suffixWait[k] = sum(lat[k+1 .. H-1])
-    double decFactor = 1.0;
-    double suffixWait = 0.0;
-    // Traverse from last hop backwards
-    for (int k = static_cast<int> (lat.size ()) - 2; k >= 0; --k)
+    // ---- Without memory effects (tCoh → ∞) ----
+    DM2Q dmNoMem = DM2QFromLink (LinkFidelity (linkStates, path[0], path[1]));
+    for (size_t k = 1; k < H; ++k)
     {
-        suffixWait += lat[static_cast<size_t> (k + 1)];
-        // Qubit at node k+1 (intermediate node between hop k and hop k+1)
-        // waits suffixWait before the swap at k+1 can proceed
-        decFactor *= std::exp (-suffixWait / tCohMs);
+        DM2Q nextLink = DM2QFromLink (LinkFidelity (linkStates, path[k], path[k + 1]));
+        dmNoMem = DMEntanglementSwap (dmNoMem, nextLink);
     }
-    return {decFactor, totalDelayMs};
+    double Fno = DMBellFidelity (dmNoMem);
+
+    // ---- With memory effects: sequential left-to-right establishment ----
+    // After link 0 is ready, qubit A is held in memory while each subsequent
+    // link k is established (wait = latency of link k).
+    DM2Q dmMem = DM2QFromLink (LinkFidelity (linkStates, path[0], path[1]));
+    for (size_t k = 1; k < H; ++k)
+    {
+        double waitMs = LinkLatencyMs (linkStates, path[k], path[k + 1]);
+        dmMem = DMDepolarizeOneLeg (dmMem, waitMs, tCohMs); // stored qubit decoheres
+        DM2Q nextLink = DM2QFromLink (LinkFidelity (linkStates, path[k], path[k + 1]));
+        dmMem = DMEntanglementSwap (dmMem, nextLink);       // Bell measurement at relay
+    }
+    double Fmem = DMBellFidelity (dmMem);
+
+    double decFactor = (Fno > 1e-9) ? (Fmem / Fno) : 1.0;
+    decFactor = std::max (0.0, std::min (1.0, decFactor));
+
+    return {Fno, Fmem, decFactor, totalDelayMs};
 }
 
 /**
- * \brief Simulate a path (both Dijkstra and Q-CAST use this for primary).
- * \return {link_fidelity, decoherence_factor, total_delay_ms} or zeros on fail.
+ * \brief Check all links on a path succeed, then compute DM-based E2E fidelity.
+ * \return {all_ok, DM2QE2E}
  */
-static std::tuple<bool, double, double, double>
+static std::pair<bool, DM2QE2E>
 SimulatePath (const std::vector<std::string> &path,
               const LinkStateMap &linkStates,
               double tCohMs)
 {
     if (path.size () < 2)
-        return {false, 0.0, 1.0, 0.0};
+        return {false, {0.0, 0.0, 1.0, 0.0}};
 
-    double linkFid = 1.0;
     for (size_t i = 0; i + 1 < path.size (); ++i)
-    {
         if (!LinkSucceeded (linkStates, path[i], path[i + 1]))
-            return {false, 0.0, 1.0, 0.0};
-        linkFid *= LinkFidelity (linkStates, path[i], path[i + 1]);
-    }
-    auto [decFactor, totalDelay] = ComputeDecoherence (path, linkStates, tCohMs);
-    return {true, linkFid, decFactor, totalDelay};
+            return {false, {0.0, 0.0, 1.0, 0.0}};
+
+    return {true, ComputeE2EFidelityDM (path, linkStates, tCohMs)};
 }
 
 /** \brief Build a RequestRecord from a Dijkstra result. */
@@ -292,12 +440,12 @@ SimulateDijkstraRequest (uint32_t runId,
         return r;
     }
 
-    auto [ok, linkFid, decFactor, delay] = SimulatePath (route, linkStates, tCohMs);
+    auto [ok, we] = SimulatePath (route, linkStates, tCohMs);
     r.succeeded           = ok;
-    r.linkFidelity        = ok ? linkFid : 0.0;
-    r.decoherenceFactor   = ok ? decFactor : 1.0;
-    r.endToEndFidelity    = ok ? linkFid * decFactor : 0.0;
-    r.totalDelayMs        = delay;
+    r.linkFidelity        = ok ? we.noMemFidelity    : 0.0;
+    r.decoherenceFactor   = ok ? we.decoherenceFactor : 1.0;
+    r.endToEndFidelity    = ok ? we.e2eFidelity       : 0.0;
+    r.totalDelayMs        = we.totalDelayMs;
     return r;
 }
 
@@ -348,16 +496,13 @@ SimulateQCastRequest (uint32_t runId,
 
     if (failedLinks.empty ())
     {
-        // Primary path fully succeeded
-        double linkFid = 1.0;
-        for (size_t i = 0; i + 1 < primary.size (); ++i)
-            linkFid *= LinkFidelity (linkStates, primary[i], primary[i + 1]);
-        auto [decFactor, delay] = ComputeDecoherence (primary, linkStates, tCohMs);
-        r.succeeded           = true;
-        r.linkFidelity        = linkFid;
-        r.decoherenceFactor   = decFactor;
-        r.endToEndFidelity    = linkFid * decFactor;
-        r.totalDelayMs        = delay;
+        // Primary path fully succeeded — density-matrix E2E fidelity
+        auto [ok, we] = SimulatePath (primary, linkStates, tCohMs);
+        r.succeeded           = ok;
+        r.linkFidelity        = ok ? we.noMemFidelity    : 0.0;
+        r.decoherenceFactor   = ok ? we.decoherenceFactor : 1.0;
+        r.endToEndFidelity    = ok ? we.e2eFidelity       : 0.0;
+        r.totalDelayMs        = we.totalDelayMs;
         return r;
     }
 
@@ -455,18 +600,14 @@ SimulateQCastRequest (uint32_t runId,
         }
     }
 
-    // Compute composite fidelity
-    double linkFid = 1.0;
-    for (size_t i = 0; i + 1 < compositePath.size (); ++i)
-        linkFid *= LinkFidelity (linkStates, compositePath[i], compositePath[i + 1]);
+    // Compute composite fidelity via density-matrix simulation
+    auto [ok2, we] = SimulatePath (compositePath, linkStates, tCohMs);
 
-    auto [decFactor, delay] = ComputeDecoherence (compositePath, linkStates, tCohMs);
-
-    r.succeeded           = true;
-    r.linkFidelity        = linkFid;
-    r.decoherenceFactor   = decFactor;
-    r.endToEndFidelity    = linkFid * decFactor;
-    r.totalDelayMs        = delay;
+    r.succeeded           = ok2;
+    r.linkFidelity        = ok2 ? we.noMemFidelity    : 0.0;
+    r.decoherenceFactor   = ok2 ? we.decoherenceFactor : 1.0;
+    r.endToEndFidelity    = ok2 ? we.e2eFidelity       : 0.0;
+    r.totalDelayMs        = we.totalDelayMs;
     r.recoveryUsed        = static_cast<uint32_t> (activeRings.size ());
     r.hops                = static_cast<uint32_t> (compositePath.size () - 1);
     r.pathStr             = PathToString (compositePath);
