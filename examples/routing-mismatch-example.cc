@@ -29,6 +29,9 @@
  */
 
 #include "ns3/core-module.h"
+#include "ns3/internet-module.h"
+#include "ns3/network-module.h"
+#include "ns3/point-to-point-module.h"
 #include "ns3/q-cast-routing-protocol.h"
 #include "ns3/quantum-basis.h"
 #include "ns3/quantum-error-model.h"
@@ -344,6 +347,17 @@ static unsigned gB_mL = 0, gB_mR = 0;
 static double   gA_fidel = 0.0, gB_fidel = 0.0;
 static double   gA_delayMs = 500.0, gB_delayMs = 5.0;
 
+// Classical P2P network for relay→pivot signaling
+static NodeContainer g_classicalNodes;   // [0]=RelayA, [1]=RelayB, [2]=Pivot
+static Ptr<Socket>   g_pivotSockA;       // pivot receive socket for path A
+static Ptr<Socket>   g_pivotSockB;       // pivot receive socket for path B
+static Ptr<Socket>   g_relaySocketA;     // send socket on RelayA node
+static Ptr<Socket>   g_relaySocketB;     // send socket on RelayB node
+static Ipv4Address   g_pivotAddrA;       // pivot's IPv4 address on the A-link subnet
+static Ipv4Address   g_pivotAddrB;       // pivot's IPv4 address on the B-link subnet
+static double        g_lossRate = 0.0;   // per-packet drop probability [0,1]
+static double        g_jitterMs = 0.0;   // max uniform pre-send jitter (ms)
+
 // =============================================================================
 // Entanglement-swap helpers
 // =============================================================================
@@ -401,8 +415,8 @@ static void FinishPath (
 
     g_qpe->CalculateFidelity ({q.src_q, q.dst_q}, fidel);
     NS_LOG_INFO ("  End-to-end fidelity = " << fidel);
-
-    if (stopAfter) Simulator::Stop ();
+    // Simulation stops when Simulator::Stop(timeout) fires in main().
+    (void)stopAfter;
 }
 
 // =============================================================================
@@ -426,7 +440,24 @@ static void RelayActB ()
         {
             DoRelaySwap (gB_q, gB_mL, gB_mR);
         }
-    Simulator::Schedule (MilliSeconds (gB_delayMs), &PivotActB);
+    // Send BSM result as a real UDP packet through the 5-ms P2P link.
+    // Pivot's UDP receive callback (PivotRecvB) will trigger PivotActB.
+    uint8_t buf[2] = {static_cast<uint8_t> (gB_mL), static_cast<uint8_t> (gB_mR)};
+    Ptr<Packet> pkt = Create<Packet> (buf, 2);
+    if (g_jitterMs > 0.0)
+        {
+            Ptr<UniformRandomVariable> rv = CreateObject<UniformRandomVariable> ();
+            rv->SetAttribute ("Max", DoubleValue (g_jitterMs));
+            Simulator::Schedule (MilliSeconds (rv->GetValue ()),
+                                 [pkt] () {
+                                     g_relaySocketB->SendTo (
+                                         pkt, 0, InetSocketAddress (g_pivotAddrB, 7002));
+                                 });
+        }
+    else
+        {
+            g_relaySocketB->SendTo (pkt, 0, InetSocketAddress (g_pivotAddrB, 7002));
+        }
 }
 
 static void PivotActA ()
@@ -445,7 +476,24 @@ static void RelayActA ()
         {
             DoRelaySwap (gA_q, gA_mL, gA_mR);
         }
-    Simulator::Schedule (MilliSeconds (gA_delayMs), &PivotActA);
+    // Send BSM result as a real UDP packet through the 500-ms P2P link.
+    // Pivot's UDP receive callback (PivotRecvA) will trigger PivotActA.
+    uint8_t buf[2] = {static_cast<uint8_t> (gA_mL), static_cast<uint8_t> (gA_mR)};
+    Ptr<Packet> pkt = Create<Packet> (buf, 2);
+    if (g_jitterMs > 0.0)
+        {
+            Ptr<UniformRandomVariable> rv = CreateObject<UniformRandomVariable> ();
+            rv->SetAttribute ("Max", DoubleValue (g_jitterMs));
+            Simulator::Schedule (MilliSeconds (rv->GetValue ()),
+                                 [pkt] () {
+                                     g_relaySocketA->SendTo (
+                                         pkt, 0, InetSocketAddress (g_pivotAddrA, 7001));
+                                 });
+        }
+    else
+        {
+            g_relaySocketA->SendTo (pkt, 0, InetSocketAddress (g_pivotAddrA, 7001));
+        }
 }
 
 // =============================================================================
@@ -663,18 +711,159 @@ SetupPhysicalSim (
 }
 
 // =============================================================================
+// Pivot UDP receive callbacks and classical P2P network setup
+// =============================================================================
+
+// Fires when the Pivot node receives BSM result from RelayA (~500 ms after t=0).
+// Simulator::Now() here reflects the real P2P propagation delay, so
+// EnsureDecoherence() inside FinishPath() applies the correct decoherence duration.
+static void
+PivotRecvA (Ptr<Socket> sock)
+{
+    Ptr<Packet> pkt;
+    Address     from;
+    while ((pkt = sock->RecvFrom (from)))
+        {
+            if (pkt->GetSize () < 2)
+                continue;
+            uint8_t buf[2];
+            pkt->CopyData (buf, 2);
+            gA_mL = buf[0];
+            gA_mR = buf[1];
+            NS_LOG_INFO ("Pivot received A-signal at t="
+                         << Simulator::Now ().As (Time::MS)
+                         << "  mL=" << gA_mL << " mR=" << gA_mR);
+            PivotActA ();
+        }
+}
+
+// Fires when the Pivot node receives BSM result from RelayB (~5 ms after t=0).
+static void
+PivotRecvB (Ptr<Socket> sock)
+{
+    Ptr<Packet> pkt;
+    Address     from;
+    while ((pkt = sock->RecvFrom (from)))
+        {
+            if (pkt->GetSize () < 2)
+                continue;
+            uint8_t buf[2];
+            pkt->CopyData (buf, 2);
+            gB_mL = buf[0];
+            gB_mR = buf[1];
+            NS_LOG_INFO ("Pivot received B-signal at t="
+                         << Simulator::Now ().As (Time::MS)
+                         << "  mL=" << gB_mL << " mR=" << gB_mR);
+            PivotActB ();
+        }
+}
+
+// Build two PointToPoint links connecting relays to the pivot:
+//   Link A: g_classicalNodes[0] (RelayA) <-> g_classicalNodes[2] (Pivot)
+//           channel delay = gA_delayMs ms  (e.g., 500 ms for the trap path)
+//   Link B: g_classicalNodes[1] (RelayB) <-> g_classicalNodes[2] (Pivot)
+//           channel delay = gB_delayMs ms  (e.g.,   5 ms for the highway path)
+//
+// Classical delay now comes from the ns-3 PointToPointChannel propagation model.
+// Queuing delay is present via the 1-Mbps interface queue on each NetDevice.
+// Optional packet loss is applied via RateErrorModel on pivot's receive interface.
+// Optional per-packet jitter is applied at the sender before socket send.
+static void
+SetupClassicalNetwork ()
+{
+    // Three lightweight ns-3 nodes (no quantum stack)
+    g_classicalNodes.Create (3); // [0]=RelayA, [1]=RelayB, [2]=Pivot
+
+    InternetStackHelper stack;
+    stack.Install (g_classicalNodes);
+
+    // ── Link A: RelayA ↔ Pivot, delay = gA_delayMs ────────────────────────
+    PointToPointHelper p2pA;
+    p2pA.SetDeviceAttribute  ("DataRate", StringValue ("1Mbps"));
+    p2pA.SetChannelAttribute ("Delay",    TimeValue (MilliSeconds (gA_delayMs)));
+    NetDeviceContainer devA =
+        p2pA.Install (g_classicalNodes.Get (0), g_classicalNodes.Get (2));
+
+    // ── Link B: RelayB ↔ Pivot, delay = gB_delayMs ────────────────────────
+    PointToPointHelper p2pB;
+    p2pB.SetDeviceAttribute  ("DataRate", StringValue ("1Mbps"));
+    p2pB.SetChannelAttribute ("Delay",    TimeValue (MilliSeconds (gB_delayMs)));
+    NetDeviceContainer devB =
+        p2pB.Install (g_classicalNodes.Get (1), g_classicalNodes.Get (2));
+
+    // ── Optional packet-loss error model on pivot's receive interface ───────
+    if (g_lossRate > 0.0)
+        {
+            // devA.Get(1) = Pivot's netdevice on link A
+            Ptr<RateErrorModel> emA = CreateObject<RateErrorModel> ();
+            emA->SetAttribute ("ErrorRate", DoubleValue (g_lossRate));
+            emA->SetAttribute ("ErrorUnit",
+                               EnumValue (RateErrorModel::ERROR_UNIT_PACKET));
+            devA.Get (1)->SetAttribute ("ReceiveErrorModel", PointerValue (emA));
+
+            // devB.Get(1) = Pivot's netdevice on link B
+            Ptr<RateErrorModel> emB = CreateObject<RateErrorModel> ();
+            emB->SetAttribute ("ErrorRate", DoubleValue (g_lossRate));
+            emB->SetAttribute ("ErrorUnit",
+                               EnumValue (RateErrorModel::ERROR_UNIT_PACKET));
+            devB.Get (1)->SetAttribute ("ReceiveErrorModel", PointerValue (emB));
+        }
+
+    // ── Assign IPv4 addresses (separate /24 subnet per link) ──────────────
+    Ipv4AddressHelper ipv4;
+
+    ipv4.SetBase ("10.1.1.0", "255.255.255.0");
+    Ipv4InterfaceContainer ifA = ipv4.Assign (devA);
+    g_pivotAddrA = ifA.GetAddress (1); // Pivot's address on link A
+
+    ipv4.SetBase ("10.1.2.0", "255.255.255.0");
+    Ipv4InterfaceContainer ifB = ipv4.Assign (devB);
+    g_pivotAddrB = ifB.GetAddress (1); // Pivot's address on link B
+
+    // ── Pivot: two UDP receive sockets (one per path) ──────────────────────
+    TypeId udp = TypeId::LookupByName ("ns3::UdpSocketFactory");
+
+    g_pivotSockA = Socket::CreateSocket (g_classicalNodes.Get (2), udp);
+    g_pivotSockA->Bind (InetSocketAddress (g_pivotAddrA, 7001));
+    g_pivotSockA->SetRecvCallback (MakeCallback (&PivotRecvA));
+
+    g_pivotSockB = Socket::CreateSocket (g_classicalNodes.Get (2), udp);
+    g_pivotSockB->Bind (InetSocketAddress (g_pivotAddrB, 7002));
+    g_pivotSockB->SetRecvCallback (MakeCallback (&PivotRecvB));
+
+    // ── Relay: UDP send sockets ────────────────────────────────────────────
+    g_relaySocketA = Socket::CreateSocket (g_classicalNodes.Get (0), udp);
+    g_relaySocketA->Bind (); // ephemeral source port
+
+    g_relaySocketB = Socket::CreateSocket (g_classicalNodes.Get (1), udp);
+    g_relaySocketB->Bind ();
+
+    std::cout << "\n=== Classical Signaling Network (P2P) ===\n"
+              << "  Path A  relay→pivot: " << gA_delayMs << " ms propagation"
+              << "  (10.1.1.1 → " << g_pivotAddrA << ":7001)\n"
+              << "  Path B  relay→pivot: " << gB_delayMs << " ms propagation"
+              << "  (10.1.2.1 → " << g_pivotAddrB << ":7002)\n";
+    if (g_lossRate > 0.0)
+        std::cout << "  Packet loss rate : " << g_lossRate << "\n";
+    if (g_jitterMs > 0.0)
+        std::cout << "  Max send jitter  : " << g_jitterMs << " ms\n";
+}
+
+// =============================================================================
 // main
 // =============================================================================
 
 int
 main (int argc, char *argv[])
 {
-    uint32_t seed    = 42;
+    uint32_t seed     = 42;
     uint32_t numNodes = 20;
 
     CommandLine cmd;
     cmd.AddValue ("seed",     "Random seed for topology generation", seed);
     cmd.AddValue ("numNodes", "Number of nodes in the random topology", numNodes);
+    cmd.AddValue ("lossRate", "Per-packet drop probability on classical links [0,1]", g_lossRate);
+    cmd.AddValue ("jitterMs", "Max uniform pre-send jitter added at relay (ms)", g_jitterMs);
     cmd.Parse (argc, argv);
 
     // -- Part 1: Generate random topology -----------------------------------
@@ -704,13 +893,40 @@ main (int argc, char *argv[])
     // -- Part 4: Physical simulation (ExaTN density matrices) ---------------
     SetupPhysicalSim (pathA, pathB, *topoHelper);
 
-    // Schedule: B runs first (short delay), A runs last (long delay, stops sim).
+    // -- Part 4b: Classical P2P signaling network ----------------------------
+    // gA_delayMs and gB_delayMs are set inside SetupPhysicalSim, so this call
+    // must come after it.  The P2P channel Delay attribute is set from those
+    // values, replacing the former Simulator::Schedule(MilliSeconds(delay), ...).
+    SetupClassicalNetwork ();
+
+    // Relay nodes perform BSM at t=0 and immediately send a 2-byte UDP packet.
+    // The packet travels through the P2P channel (500 ms or 5 ms propagation)
+    // and arrives at Pivot, whose receive callback triggers PivotActA/B.
+    // Simulator::Now() in those callbacks carries the real propagation delay,
+    // so EnsureDecoherence() inside FinishPath() is automatically correct.
     Simulator::ScheduleNow (&RelayActA);
     Simulator::ScheduleNow (&RelayActB);
+
+    // Timeout: stop even if a signal is lost (lossRate > 0).
+    // Normal termination happens when both PivotActA and PivotActB have fired.
+    double stopSec = (gA_delayMs + g_jitterMs + 500.0) / 1000.0;
+    Simulator::Stop (Seconds (stopSec));
+
     Simulator::Run ();
     Simulator::Destroy ();
 
     // -- Part 5: Non-monotonicity report ------------------------------------
+
+    // Warn if a signal was lost (fidelity not updated from default 0.0).
+    if (g_lossRate > 0.0)
+        {
+            if (gA_fidel == 0.0)
+                std::cout << "  [WARNING] Path A signal was lost (lossRate="
+                          << g_lossRate << "); F(A) is undefined.\n";
+            if (gB_fidel == 0.0)
+                std::cout << "  [WARNING] Path B signal was lost (lossRate="
+                          << g_lossRate << "); F(B) is undefined.\n";
+        }
 
     std::cout << "\n=== Results ===\n\n"
               << std::fixed << std::setprecision (4)
