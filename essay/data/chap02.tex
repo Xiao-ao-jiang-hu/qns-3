@@ -15,12 +15,12 @@
 然而，该范式下的多数协议仍将保真度视为一个硬性约束条件。其典型路径选择逻辑是两阶段的：首先，从拓扑中筛选出所有预计保真度不低于应用阈值$F_{th}$的候选路径；其次，在这些合格路径中，再根据跳数、时延或总权重进行优化选择。这种“先过滤，后优化”的模式本质上是一种满足性策略，未能将“在资源约束内尽可能提升保真度”本身作为路由计算的单一且连续的优化目标。
 
 \subsection{近期代表性路由协议详述}
-近期的研究在应对量子网络独特挑战方面提出了更具体和创新的协议，尤其体现在处理非等方性路由度量（non-isotonic metric）以及保真度感知的动态多路径路由上。
+近期的研究在应对量子网络独特挑战方面提出了更具体和创新的协议，尤其体现在处理非保序性路由度量（non-isotonic metric）以及保真度感知的动态多路径路由上。
 
 \subsubsection{基于路由代数与KOP的优化路由协议}
-针对量子网络路由度量（如期望吞吐量EXT和可达速率AR）固有的非等方性（non-isotonic）特性，直接应用经典最短路径算法（如Dijkstra）可能无法找到全局最优路径。\cite{Wang2025} 提出的KOP（K-Optimal Paths）算法系统性地解决了这一问题。
+针对量子网络路由度量（如期望吞吐量EXT和可达速率AR）固有的非保序性（non-isotonic）特性，直接应用经典最短路径算法（如Dijkstra）可能无法找到全局最优路径。\cite{Wang2025} 提出的KOP（K-Optimal Paths）算法系统性地解决了这一问题。
 
-该工作的核心理论贡献在于引入 路由代数（Routing Algebra） 作为分析量子路由度量的数学基础。它首先证明，对于像EXT和AR这样的度量，其全序关系 $\preceq$ 不满足“等方性（isotonicity）”，即 $w(a) \preceq w(b)$ 不能保证 $w(a \oplus c) \preceq w(b \oplus c)$（其中 $\oplus$ 表示路径拼接）。为了克服这一障碍，作者定义了 最大等方性约化（Greatest Isotonic Reduction, $\preceq_{GR}$） 关系，它是一个保持等方性的偏序关系，并且是原全序关系的最大子关系。基于$\preceq_{GR}$，他们设计了D-Dijkstra（Dominant Dijkstra）算法，用于在每个节点找到并保留所有在$\preceq_{GR}$意义下的“支配路径”。
+该工作的核心理论贡献在于引入 路由代数（Routing Algebra） 作为分析量子路由度量的数学基础。它首先证明，对于像EXT和AR这样的度量，其全序关系 $\preceq$ 不满足”保序性（isotonicity）”，即 $w(a) \preceq w(b)$ 不能保证 $w(a \oplus c) \preceq w(b \oplus c)$（其中 $\oplus$ 表示路径拼接）。为了克服这一障碍，作者定义了 最大保序约化（Greatest Isotonic Reduction, $\preceq_{GR}$） 关系，它是一个保持保序性的偏序关系，并且是原全序关系的最大子关系。基于$\preceq_{GR}$，他们设计了D-Dijkstra（Dominant Dijkstra）算法，用于在每个节点找到并保留所有在$\preceq_{GR}$意义下的“支配路径”。
 
 KOP算法在D-Dijkstra的基础上，结合了Yen’s K-最短路径算法的思想。其具体步骤是：1）使用D-Dijkstra找到源-目的节点间在$\preceq_{GR}$下的第一条最优路径。2）对于已找到的第k-1条路径，依次将其“根路径（root path）”与“支路（spur path）”拼接，并通过临时删除边和节点来避免生成环，再利用D-Dijkstra计算新的候选路径。3）在所有候选路径中，根据原始全序 $\preceq$ 选择最优先的作为第k条路径。该算法被严格证明能够找到前K条简单最优路径。为了降低计算复杂度，作者还提出了一个启发式变种H-KOP，在后续搜索中用标准Dijkstra替代D-Dijkstra，在多数情况下仍能保持接近最优的性能。
 
