@@ -46,7 +46,7 @@ KOP算法在D-Dijkstra的基础上，结合了Yen’s K-最短路径算法的思
 这些模拟器构成了当前量子网络研究的重要工具，但它们普遍作为独立的仿真框架运行，难以与成熟的经典网络协议栈进行深度的、事件级同步的交互仿真，而这对于研究量子-经典混合网络的动态行为至关重要。
 
 \subsection{控制流适应：一种针对LOCC协议的高效模拟方法}
-在提升模拟效率方面，近期出现了一种面向特定协议类型的重要优化方法。\cite{Lin2024Control}在《Control Flow Adaption: An Efficient Simulation Method For Noisy Quantum Networks》一文中提出了“控制流适应”（Control Flow Adaption, CFA）方法，旨在高效模拟一类常见的“局域操作与经典通信”（LOCC）协议。
+在提升模拟效率方面，近期出现了一种面向特定协议类型的重要优化方法。\cite{lin2024controlflowadaptionefficient}在《Control Flow Adaption: An Efficient Simulation Method For Noisy Quantum Networks》一文中提出了“控制流适应”（Control Flow Adaption, CFA）方法，旨在高效模拟一类常见的“局域操作与经典通信”（LOCC）协议。
 
 该方法的核心洞见在于，许多量子网络协议（如纠缠交换、蒸馏）的步骤由经典通信传来的测量结果控制。直接模拟需要跟踪所有可能的分支并进行大量的蒙特卡洛采样。CFA方法通过将经典控制流“吸收”到量子电路中，构造一个包含所有可能分支的“叠加”式张量网络进行计算。具体而言，它通过引入辅助量子寄存器来编码经典控制信息，并设计相应的适应酉操作（Adaption Unitary）来模拟经典计算函数，最后通过及时的张量收缩丢弃不必要的中间信息。
 

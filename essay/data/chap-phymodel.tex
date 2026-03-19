@@ -1,0 +1,66 @@
+% !TeX root = ../thuthesis-example.tex
+%
+% 第二章：量子网络物理建模
+%
+
+\chapter{量子网络物理建模}
+\label{chap:phymodel}
+
+本章建立多跳量子中继网络的物理模型，推导经典信令时延对端到端纠缠保真度的定量影响。这些结论是后续章节分析路由非保序性和设计保真度感知路由算法的理论基础。
+
+\section{多跳量子中继网络的物理模型}
+\label{sec:network-model}
+
+\subsection{节点与链路参数}
+
+考虑由$n$个量子中继节点$v_1, v_2, \ldots, v_n$构成的线性量子网络，其中$v_1$为源节点，$v_n$为目的节点。每个节点$v_i$配备量子存储器，其退相干参数（相干时间）记为$\tau_i > 0$。相邻节点$v_i$与$v_{i+1}$之间存在量子信道，可以概率性地生成Bell纠缠对；同时存在经典信道，用于传递测量结果等控制信令，经典信令从$v_i$传至$v_{i+1}$的传播时延记为$\delta_i \geq 0$。
+
+在不失一般性的前提下，本章对单跳链路的纠缠生成保真度建模如下：链路$(v_i, v_{i+1})$生成的Bell对初始保真度记为$F^{(0)}_i \in (0, 1]$，该值由信道噪声（去极化噪声、相位翻转等）和纠缠生成操作的不完美性共同决定。
+
+\subsection{纠缠交换协议的时序模型}
+
+建立$v_1$到$v_n$端到端纠缠的标准协议是\emph{链式纠缠交换}：在$t=0$时刻，全部$n-1$条相邻链路同时尝试生成纠缠对；成功生成后，中间节点$v_k$（$k = 2, \ldots, n-1$）对其持有的来自$v_{k-1}$和$v_{k+1}$的两个量子比特执行贝尔态测量（Bell State Measurement, BSM），测量结果$\{m_L, m_R\} \in \{0,1\}^2$通过经典信道传递给下一节点$v_{k+1}$以指导纠正操作。
+
+\textbf{关键时序约束：}量子比特在存储器中等待的时间直接决定退相干损耗。节点$v_k$的量子比特自$t=0$起等待，直至收到来自$v_{k-1}$的经典信令方可完成交换。由于信令沿链路逐跳传播，节点$v_k$在执行纠正操作时的等待时间$T(k)$满足如下递推关系：
+
+\begin{equation}
+  T(k) = \sum_{i=2}^{k-1} \delta_i, \quad k = 2, 3, \ldots, n-1
+  \label{eq:waiting-time}
+\end{equation}
+
+即$v_k$的等待时间等于其左侧所有中继链路经典时延之和。特别地，$T(2) = 0$（第一个中继节点无需等待），$T(n-1) = \sum_{i=2}^{n-2} \delta_i$（最后一个中继节点等待时间最长）。
+
+\section{端到端纠缠保真度的解析公式}
+\label{sec:fidelity-formula}
+
+\subsection{退相干模型}
+
+量子存储器中的退相干通常被建模为振幅阻尼或去极化过程。在本文的时间尺度内，采用指数衰减模型：若量子比特在相干时间为$\tau$的存储器中等待时间$\Delta t$，其保真度衰减因子为
+\begin{equation}
+  \mathcal{D}(\Delta t, \tau) = e^{-\Delta t / \tau}
+  \label{eq:decay-factor}
+\end{equation}
+该指数衰减模型在文献中被广泛采用~\cite{lin2024controlflowadaptionefficient}，与实际量子存储器的退相干行为吻合。
+
+\subsection{多跳端到端保真度}
+
+在全部链路初始保真度均为$F_0$（简化假设，一般情况类似推导）的条件下，链式纠缠交换的端到端保真度由各中继节点的退相干损耗之积给出：
+
+\begin{equation}
+  F = F_0^{\,n-1} \cdot \prod_{k=2}^{n-1} e^{-T(k)/\tau_k}
+    = F_0^{\,n-1} \cdot \exp\!\left(-\sum_{k=2}^{n-1} \frac{T(k)}{\tau_k}\right)
+  \label{eq:e2e-fidelity}
+\end{equation}
+
+代入式~\eqref{eq:waiting-time}，将双重求和展开：
+
+\begin{equation}
+  F = F_0^{\,n-1} \cdot \exp\!\left(-\sum_{k=2}^{n-1} \frac{1}{\tau_k} \sum_{i=2}^{k-1} \delta_i\right)
+  \label{eq:e2e-fidelity-expanded}
+\end{equation}
+
+式~\eqref{eq:e2e-fidelity-expanded}揭示了两类参数对端到端保真度的耦合影响：
+\begin{enumerate}
+  \item \textbf{链路经典时延$\delta_i$}：对所有位于其右侧的中继节点产生累积的退相干压力；时延越大、位置越靠左，影响越广。
+  \item \textbf{节点相干时间$\tau_k$}：相干时间短的节点（$\tau_k$小）对等待时间极度敏感；这类节点构成保真度的主要瓶颈。
+\end{enumerate}

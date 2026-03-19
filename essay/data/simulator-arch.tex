@@ -1,0 +1,158 @@
+% !TeX root = ../thuthesis-example.tex
+%
+% 第五章：量子-经典混合仿真平台qns-3的架构设计
+%
+
+\chapter{量子-经典混合仿真平台qns-3的架构设计}
+\label{chap:qns3-arch}
+
+\section{总体设计目标与分层结构}
+\label{sec:arch-overview}
+
+量子网络路由协议的研究对仿真平台提出了双重要求：一方面，需要以密度矩阵形式精确模拟量子比特在噪声信道和有损存储器中的演化，以获得可靠的保真度数据；另一方面，需要将量子协议置于真实的经典网络环境中运行，以捕捉因队列时延、信道拥塞和丢包等因素对量子业务产生的影响。现有量子网络仿真器（NetSquid、SeQUeNCe等）内部维护独立的事件调度引擎，难以与经典网络协议栈在事件级别实现精确的时间同步，无法满足上述第二项要求。
+
+qns-3（Quantum ns-3）是清华大学量子软件研究中心开发的量子网络仿真平台，其核心设计思路是将量子网络的全部事件调度纳入工业级网络仿真器NS-3\cite{riley2010ns3}的统一离散事件时间轴，而非构建独立的仿真引擎。这一决策使得量子纠缠的生成、交换与测量等物理层事件，能够与NS-3中已高度成熟的IP路由、TCP传输、CSMA/点对点链路等经典协议模型在同一时间轴上竞争调度，实现事件级别的精确同步。
+
+qns-3采用五层协议栈架构（图~\ref{fig:qns3-arch}），自下而上依次为：ExaTN张量网络计算后端、量子物理层、量子链路层、量子网络层，以及量子应用层。本工作开展之前，qns-3仅具备底部两层（ExaTN后端与量子物理层）及顶层的若干点对点应用协议；\textbf{量子链路层与量子网络层（含路由协议）均为本工作新实现的内容}，是填补平台协议栈中层缺失的核心工程贡献。各层之间通过清晰定义的C++接口和ns-3回调机制耦合，整体遵循ns-3的模块化设计规范。
+
+\begin{figure}[htb]
+  \centering
+  \begin{tikzpicture}[
+      % 主层框：左侧留出类名标注空间，右侧留出信令箭头空间
+      box/.style={draw, rounded corners=3pt, fill=#1, minimum width=7.5cm,
+                  minimum height=1.05cm, align=center, font=\small},
+      % 左侧类名：等宽小字
+      llbl/.style={font=\scriptsize\ttfamily, text=gray!55!black, anchor=east},
+    ]
+    \node[box=blue!12]   (app)   at (0, 5.0)
+      {\textbf{量子应用层（L4）}\\[2pt]
+       隐形传态 \textperiodcentered{} 纠缠交换 \textperiodcentered{} 纠缠蒸馏};
+    \node[box=green!12]  (net)   at (0, 3.6)
+      {\textbf{量子网络层（L3）}\\[2pt]
+       路径建立与管理 \textperiodcentered{} Dijkstra / Q-CAST路由};
+    \node[box=yellow!20] (link)  at (0, 2.2)
+      {\textbf{量子链路层（L2）}\\[2pt]
+       邻居间纠缠对分发 \textperiodcentered{} 纠缠状态管理};
+    \node[box=orange!20] (phy)   at (0, 0.8)
+      {\textbf{量子物理层（L1）}\\[2pt]
+       量子门 \textperiodcentered{} 测量 \textperiodcentered{} 退相干 \textperiodcentered{} 保真度计算};
+    \node[box=red!12]    (exatn) at (0,-0.6)
+      {\textbf{ExaTN密度矩阵计算后端}\\[2pt]
+       张量网络 \textperiodcentered{} 全局量子态存储与演算};
+    % ── 左侧类名标注 ──────────────────────────────────────────────────────────
+    \node[llbl, left=0.35cm of app]   {ns-3 Application};
+    \node[llbl, left=0.35cm of net]   {QuantumNetworkLayer};
+    \node[llbl, left=0.35cm of link]  {QuantumLinkLayerService};
+    \node[llbl, left=0.35cm of phy]   {QuantumPhyEntity};
+    \node[llbl, left=0.35cm of exatn] {QuantumNetworkSimulator};
+    % ── 层间双向箭头 ──────────────────────────────────────────────────────────
+    \foreach \a/\b in {app/net, net/link, link/phy, phy/exatn}
+      \draw[<->, thick, gray!70] (\a.south) -- (\b.north);
+    % ── 右侧经典信令标注（水平引出，避免与左侧标注重叠）────────────────────
+    \draw[dashed, blue!55!black, semithick, ->]
+      ($(app.east)!0.5!(net.east) + (0.15, 0)$) -- ++(2.1, 0)
+      node[right=0.05cm, font=\small, blue!55!black, align=left]
+        {IPv6/UDP\\[-1pt]{\scriptsize 经典信令}};
+  \end{tikzpicture}
+  \caption{qns-3量子网络仿真平台五层协议栈架构}
+  \label{fig:qns3-arch}
+\end{figure}
+
+\section{离散事件驱动的量子-经典协同仿真}
+\label{sec:discrete-event}
+
+qns-3与其他量子网络仿真器最本质的区别在于其事件调度机制。在NetSquid等平台中，量子协议的时序逻辑由平台内部的事件引擎驱动，经典网络行为（如信令时延）往往以参数化的固定延迟注入，而非通过真实的协议栈产生。这导致两类时间轴的对齐仅为近似处理，无法捕捉真实的动态效应。
+
+qns-3的解决方案是将所有量子操作均封装为标准的ns-3事件，通过\texttt{Simulator::Schedule()}接口注册到全局事件队列。当仿真时间推进到某量子事件的触发时刻，事件回调函数调用ExaTN后端执行相应的张量网络计算；完成后，该回调函数可进一步向事件队列注册后续量子事件或触发经典报文的发送。以纠缠交换协议为例，混合事件流的典型执行序列如下：
+
+\begin{enumerate}
+  \item 仿真时刻$t=0$：中继节点完成Bell态测量（BSM），测量结果$\{m_L, m_R\}$通过\textbf{真实的ns-3 UDP套接字}打包为数据包，经由挂载了传播时延属性的\texttt{PointToPointChannel}发往枢轴节点；
+  \item 仿真时刻$t=\delta$：$\delta$为P2P信道的真实传播时延（可含排队延迟和抖动），枢轴节点的UDP接收回调触发，从中解出测量结果；
+  \item 此时\texttt{Simulator::Now()}返回$\delta$，物理层的退相干模型以$\delta$为等待时间自动计算枢轴量子比特的保真度衰减；
+  \item 枢轴节点完成纠正操作后，继续向下游发送经典信令，触发链式的纠缠交换流程。
+\end{enumerate}
+
+这一机制确保了"经典信令时延对量子态退相干的影响"能够被精确建模，而非依赖手工参数化的近似值。
+
+\section{ExaTN密度矩阵计算后端}
+\label{sec:exatn}
+
+量子态的精确模拟由\texttt{QuantumNetworkSimulator}类负责，该类封装了ExaTN（Exascale Tensor Networks）\cite{lyakh2019exatn}张量网络库，以密度矩阵表示全网量子态。
+
+在内部实现中，每个量子比特对应张量网络$\mathcal{N}$中的一个指标（index）。$n$量子比特的系统密度矩阵$\rho \in \mathbb{C}^{2^n \times 2^n}$被分解为"ket半网络"与"bra半网络"的张量积形式：
+\begin{equation}
+  \rho = \sum_{\alpha} \lambda_\alpha \vert\psi_\alpha\rangle\langle\psi_\alpha\vert
+  \label{eq:density-matrix}
+\end{equation}
+其中每个$\vert\psi_\alpha\rangle$对应张量网络中的一条收缩路径。
+
+\texttt{QuantumNetworkSimulator}维护了从量子比特名称到张量编号的双向映射（ket侧与bra侧各一份），使得上层物理层接口可通过量子比特的\emph{字符串名称}（如\texttt{"A\_pL"}、\texttt{"B\_src\_q"}）定位并操作对应的密度矩阵张量。保真度计算通过完整的密度矩阵收缩完成，绕过了依赖解析公式的近似计算：
+\begin{equation}
+  F = \langle\Phi^+\vert\,\rho_{AB}\,\vert\Phi^+\rangle
+  \label{eq:fidelity}
+\end{equation}
+其中$\vert\Phi^+\rangle$为目标Bell态。
+
+\section{量子物理层与存储器退相干模型}
+\label{sec:phy-layer}
+
+量子物理层由\texttt{QuantumPhyEntity}类实现，负责将上层的量子操作请求转换为对ExaTN后端的具体调用，并管理访问控制（防止不同网络节点交叉操作对方的量子比特）。其主要功能包括：量子比特的纯态/混态初始化（\texttt{GenerateQubitsPure}/\texttt{GenerateQubitsMixed}）、量子门施加（\texttt{ApplyGate}）、Bell态测量（\texttt{BellMeasure}）及保真度计算（\texttt{CalculateFidelity}）。
+
+退相干效应由\texttt{QuantumMemory}类统一管理。该类为每个存储的量子比特记录一个时间戳$t_{\text{last}}$（类型为ns-3的\texttt{Time}对象），在任何操作施加于该量子比特之前，系统首先计算等待时间$\Delta t = t_{\text{now}} - t_{\text{last}}$，并调用\texttt{TimeModel}将其转化为振幅阻尼或退相位噪声：
+\begin{equation}
+  F(t_{\text{now}}) = F(t_{\text{last}}) \cdot e^{-\Delta t / \tau}
+  \label{eq:decoherence}
+\end{equation}
+其中$\tau$为该量子比特所对应节点的相干时间参数。这一"惰性求值"（lazy evaluation）策略确保了退相干操作与ns-3仿真时钟严格同步，无需独立的退相干事件定时器。
+
+qns-3实现了三类量子错误模型：
+\begin{itemize}
+  \item \textbf{TimeModel}：基于时间的退相干模型，如式~\eqref{eq:decoherence}，由\texttt{QuantumMemory}在操作前自动调用；
+  \item \textbf{DephaseModel}：相位翻转噪声，模拟量子门操作或信道传输引入的去相位误差；
+  \item \textbf{DepolarModel}：去极化信道噪声，将量子态以概率$1-p$映射为最大混合态，默认信道保真度参数$p=0.95$。
+\end{itemize}
+
+\section{量子链路层：纠缠对分发与状态管理}
+\label{sec:link-layer}
+
+量子链路层（\texttt{QuantumLinkLayerService}）负责在相邻节点间建立Bell纠缠对，是网络层建立多跳端到端纠缠的基础原语。链路层屏蔽了纠缠生成的概率性失败细节，向上层提供以下接口语义：向指定邻居节点发出纠缠请求，并在成功后通过ns-3回调通知上层\texttt{EntanglementId}、所生成的量子比特名称及初始保真度。
+
+每条成功建立的纠缠对封装为\texttt{EntanglementInfo}结构体，包含本地和远端量子比特名称、生成时刻（\texttt{createdAt}，类型为\texttt{Time}）及有效性标志。链路层的状态机仅含四种状态：\texttt{PENDING}（等待）、\texttt{READY}（可用）、\texttt{CONSUMED}（已被上层消费）、\texttt{FAILED}（失败），状态转移通过ns-3事件调度触发，全程在统一时间轴上推进。
+
+\section{量子网络层与路由协议}
+\label{sec:net-layer}
+
+\texttt{QuantumNetworkLayer}类实现量子网络层（L3）逻辑，管理多跳纠缠路径的建立与生命周期。其核心抽象是\emph{路径}（Path），每条路径具有唯一标识符\texttt{PathId}，并经历如下生命周期：
+\begin{equation}
+  \texttt{PENDING} \;\longrightarrow\; \texttt{READY} \;\longrightarrow\; \begin{cases} \texttt{CONSUMED} \\ \texttt{FAILED} \end{cases}
+  \label{eq:path-lifecycle}
+\end{equation}
+网络层负责协调每一跳链路层纠缠的建立顺序、纠缠交换操作（\texttt{EntanglementSwap}）的触发时机，以及最终端到端纠缠对的保真度检验。路径建立成功（\texttt{READY}）后，通过注册的回调函数通知上层应用，应用方可凭\texttt{PathId}消费（消耗）该纠缠资源。
+
+qns-3目前实现了两种路由协议，均继承自抽象基类\texttt{QuantumRoutingProtocol}：
+\begin{enumerate}
+  \item \textbf{DijkstraRoutingProtocol}：以单跳链路保真度为链路权重，基于Dijkstra算法求解最优路径，适用于保真度分布较均匀的网络拓扑；
+  \item \textbf{QCastRoutingProtocol}：实现Q-CAST\cite{shi2020qcast}协议，以期望吞吐量$E_t$为路径度量，通过扩展Dijkstra算法（EDA）和多路径备份路由，在链路保真度分布不均匀时表现更优。$E_t$定义为
+    \begin{equation}
+      E_t(P) = \Bigl(\prod_{e \in P} p_e\Bigr) \cdot S(|P|)
+      \label{eq:et}
+    \end{equation}
+    其中$p_e$为链路$e$的纠缠生成成功概率，$S(|P|)$为路径跳数的惩罚因子。
+\end{enumerate}
+
+值得注意的是，Q-CAST的$E_t$度量不满足路由代数中的等方性（isotonicity）条件\cite{Wang2025}，即路径拼接后的度量大小关系不保持单调性。这一固有缺陷是本文第~\ref{chap:nonisotonic}章所研究的"路由非保序性"问题的理论根源。
+
+\section{经典信令信道的建模方式}
+\label{sec:signaling}
+
+量子网络协议中的经典信令（Bell态测量结果通知、纠正操作指令、路由控制报文等）需要在节点间可靠传递，其传递时延直接决定了枢轴节点量子比特的等待时间，进而影响退相干损耗。
+
+qns-3在应用层协议（如\texttt{TelepAdaptApp}、\texttt{DistillNestedAdaptApp}）中通过IPv6 UDP套接字承载上述经典信令，由此获得了以下仿真保真性保证：
+\begin{itemize}
+  \item \textbf{真实传播时延}：数据包经由ns-3 \texttt{PointToPointChannel}或\texttt{CsmaChannel}传输，传播时延由信道的\texttt{Delay}属性决定，而非手工注入的固定延迟；
+  \item \textbf{排队时延与拥塞}：链路的\texttt{DataRate}属性决定了串行化时延；当量子信令报文与经典背景流量（如CBR流）竞争共享信道时，排队时延自然涌现；
+  \item \textbf{随机丢包}：可在接收侧的\texttt{NetDevice}上挂载\texttt{RateErrorModel}，以指定的每包丢弃概率模拟信道丢包，测试量子协议在经典信令丢失时的鲁棒性；
+  \item \textbf{时延抖动}：可在发送侧引入均匀随机抖动，模拟实际链路中的时延变化。
+\end{itemize}
+
+以上特性使得在qns-3中运行的量子路由协议能够被置于接近真实的量子-经典混合网络环境中进行压测。这也是qns-3区别于其他量子网络仿真工具的核心工程价值：量子协议的正确性不仅在理想信道假设下得到验证，同时在具有真实统计特性的经典网络动态下得到评估。

@@ -16,13 +16,13 @@
   output = print,
   % 格式类型
   %   默认为论文（thesis），也可以设置为开题报告（proposal）
-  thesis-type = proposal,
+  thesis-type = thesis,
   %
   % 标题
   %   可使用“\\”命令手动控制换行
   %
-  title  = {开题报告},
-  title* = {Proposal},
+  title  = {保真度感知的自适应量子路由协议研究与仿真实现},
+  % title* = {Proposal},
   %
   % 学科门类
   %   1. 学术型
@@ -190,6 +190,10 @@
   \fi
 }
 \makeatother
+
+% TikZ：用于绘制架构图
+\usepackage{tikz}
+\usetikzlibrary{positioning, calc, shapes.geometric, arrows.meta}
 
 % hyperref 宏包在最后调用
 \usepackage{hyperref}
