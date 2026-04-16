@@ -120,9 +120,9 @@ Q-CAST协议以期望吞吐量$E_t$作为路径度量（详见第~\ref{sec:qcast
 
 相关性约束是必要的：若高延迟链路连接劣质节点，则路径$a$的自身保真度$F(a)$因大$T_a$乘以大$1/\tau_k$而直接衰减至极低水平，满足不了$F(a) \geq F(b)$的前提，无法构成"诱饵"场景。
 
-\subsection{"失配钻石"子图}
+\subsection{"高延时陷阱"子图}
 
-在生成的随机拓扑中，以如下方式寻找（或注入）\emph{失配钻石}（mismatch diamond）子图（图~\ref{fig:mismatch-diamond}）：
+在生成的随机拓扑中，以如下方式寻找（或注入）\emph{高延时陷阱}（mismatch diamond）子图（图~\ref{fig:mismatch-diamond}）：
 
 \begin{figure}[htb]
   \centering
@@ -155,7 +155,7 @@ Q-CAST协议以期望吞吐量$E_t$作为路径度量（详见第~\ref{sec:qcast
     \node[right=0.05cm, font=\scriptsize, red!60!black] at (1.0, 1.0) {── ─ ─ 陷阱路径$a$};
     \node[right=0.05cm, font=\scriptsize, blue!60!black] at (1.0, 0.5) {────── 公路路径$b$};
   \end{tikzpicture}
-  \caption{失配钻石子图示意：路径$a$（红色虚线）含一条500\,ms高延迟陷阱链路，节点为完美存储器；路径$b$（蓝色实线）全部为5\,ms低延迟链路，节点为劣质存储器。两条路径共享到$v_d$的后续路径（灰色）。}
+  \caption{高延时陷阱子图示意：路径$a$（红色虚线）含一条500\,ms高延迟陷阱链路，节点为完美存储器；路径$b$（蓝色实线）全部为5\,ms低延迟链路，节点为劣质存储器。两条路径共享到$v_d$的后续路径（灰色）。}
   \label{fig:mismatch-diamond}
 \end{figure}
 
@@ -173,12 +173,12 @@ Q-CAST协议以期望吞吐量$E_t$作为路径度量（详见第~\ref{sec:qcast
 
 \subsection{与Q-CAST度量的对比}
 
-在上述失配钻石场景中，Q-CAST计算$E_t$时假设链路参数均匀、不考虑时延差异。由于路径$a$的链路保真度（初始值）与路径$b$相近甚至更高，$E_t(a) \geq E_t(b)$，Q-CAST将选择路径$a$。然而如式~\eqref{eq:eta-example}所示，该选择导致了约63\%的端到端保真度损失，严重偏离最优决策。
+在上述高延时陷阱场景中，Q-CAST计算$E_t$时假设链路参数均匀、不考虑时延差异。由于路径$a$的链路保真度（初始值）与路径$b$相近甚至更高，$E_t(a) \geq E_t(b)$，Q-CAST将选择路径$a$。然而如式~\eqref{eq:eta-example}所示，该选择导致了约63\%的端到端保真度损失，严重偏离最优决策。
 
 \section{卫星量子网络中的非保序性自然实例}
 \label{sec:satellite-non-isotonicity}
 
-上节的"失配钻石"在理论上需要刻意构造——高延迟链路必须与完美存储器相配对。然而，在星地混合量子网络的现实部署中，这一条件天然满足，无需人为设计。QuESat~\cite{gu2025quesat}提出了一种由低地球轨道（LEO）卫星星座构成的被动光学量子中继网络，旨在实现全球尺度的纠缠分发，提供了一个典型的自然实例。
+上节的"高延时陷阱"在理论上需要刻意构造——高延迟链路必须与完美存储器相配对。然而，在星地混合量子网络的现实部署中，这一条件天然满足，无需人为设计。QuESat~\cite{gu2025quesat}提出了一种由低地球轨道（LEO）卫星星座构成的被动光学量子中继网络，旨在实现全球尺度的纠缠分发，提供了一个典型的自然实例。
 
 \subsection{星地混合链路的物理特性}
 
@@ -190,7 +190,7 @@ Q-CAST协议以期望吞吐量$E_t$作为路径度量（详见第~\ref{sec:qcast
 
 \subsection{失配条件的自然满足}
 
-将上述物理参数对应到§\ref{sec:mismatch-topology}的失配钻石模型：
+将上述物理参数对应到§\ref{sec:mismatch-topology}的高延时陷阱模型：
 
 \begin{itemize}
   \item \textbf{陷阱路径$a$（卫星段）：}卫星链路的低损耗使得纠缠初始保真度$F_0 \approx 0.95$以上，而完美的自由空间信道等效为"完美节点"（$\tau_k^{(a)} \to \infty$）；但累积经典信令时延$T_a$可达$\sim 100$\,ms。
@@ -198,7 +198,7 @@ Q-CAST协议以期望吞吐量$E_t$作为路径度量（详见第~\ref{sec:qcast
   \item \textbf{后续路径$c$（末段地面节点）：}全球网络的目的节点往往位于地面，其接入链路通过地面量子中继器组成，$S_c = \sum_k 1/\tau_k$显著，$D_c > 0$。
 \end{itemize}
 
-上述参数天然符合失配钻石的构造前提，无需手动调整。
+上述参数天然符合高延时陷阱的构造前提，无需手动调整。
 
 \subsection{数值估算}
 
