@@ -10,12 +10,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Prerequisites
 - **gcc-11.5.0** (not the system default gcc — must use `gcc-11`/`g++-11`)
-- Python 3.6–3.10, CMake, OpenBLAS, OpenMPI
+- Python 3.9 (managed via `.venv` in ns-3.42 root)
+- CMake, OpenBLAS, OpenMPI
 - ExaTN built and installed at `~/.exatn`
+
+### Python Environment
+The project uses a Python 3.9 virtual environment located at `.venv/` in the ns-3.42 root directory. Activate it before building or running:
+
+```bash
+# From ns-3.42 root
+source .venv/bin/activate
+```
 
 ### Building
 ```bash
-# From ns-3.42 root (not contrib/quantum/)
+# From ns-3.42 root (not contrib/quantum/), with .venv activated
 ./ns3 configure --enable-examples --enable-tests
 ./ns3 build quantum
 ```
@@ -40,7 +49,7 @@ NS_LOG="QuantumNetworkSimulator=info:QuantumPhyEntity=info|logic" ./ns3 run tele
 ```
 
 ### Adding a New Example
-In `CMakeLists.txt`, add:
+In `examples/CMakeLists.txt`, add:
 ```cmake
 build_lib_example(
     NAME my-new-example

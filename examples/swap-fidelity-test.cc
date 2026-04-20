@@ -147,6 +147,7 @@ void
 ScheduleWaitAndSwap()
 {
     g_wait_time = g_random_wait->GetValue(MIN_WAIT_TIME, MAX_WAIT_TIME);
+    g_wait_time = 0.01;
 
     NS_LOG_INFO("");
     NS_LOG_INFO("Step 3: Schedule swap operation after wait");
