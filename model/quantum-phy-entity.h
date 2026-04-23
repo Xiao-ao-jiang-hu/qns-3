@@ -288,6 +288,24 @@ public:
    */
   void EnsureAllDecoherence ();
 
+  /**
+   * \brief Get the coherence time configured for a node.
+   * \param owner Owner name.
+   * \return Coherence time in milliseconds.
+   */
+  double GetCoherenceTimeMs (const std::string &owner) const;
+
+  /**
+   * \brief Move a qubit between owner memories without changing the quantum state.
+   * \param fromOwner Current owner.
+   * \param toOwner New owner.
+   * \param qubit Qubit name.
+   * \return True if the transfer succeeded.
+   */
+  bool TransferQubit (const std::string &fromOwner,
+                      const std::string &toOwner,
+                      const std::string &qubit);
+
 
 /* util */
 

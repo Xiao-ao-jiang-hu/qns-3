@@ -137,6 +137,12 @@ public:
   */
   void ApplyErrorModel (Ptr<QuantumPhyEntity> qphyent, const std::vector<std::string> &qubits,
                         const Time &moment) const override;
+
+  /**
+   * \brief Get the coherence-time parameter carried by this model.
+   * \return Characteristic time constant in seconds.
+   */
+  double GetRate () const;
 };
 
 /**

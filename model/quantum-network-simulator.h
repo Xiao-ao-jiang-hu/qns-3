@@ -41,11 +41,11 @@ private:
 
 /* util */
   
-  /** Count of ExaTN tensor names allocated automatically. */
-  unsigned m_exatn_name_count;
-
   /** All created ExaTN tensors. */
   std::vector<std::string> m_exatn_tensors = {};
+
+  /** Global counter to keep ExaTN tensor names unique across simulator instances. */
+  static unsigned long long s_exatn_name_count;
 
 public:
   QuantumNetworkSimulator (const std::vector<std::string> &owners);

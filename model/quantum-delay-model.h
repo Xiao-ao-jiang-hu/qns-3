@@ -280,6 +280,26 @@ private:
     Ptr<ExponentialRandomVariable> m_durationRng;
 };
 
+/**
+ * \brief Fixed delay model used for deterministic control-plane timings.
+ */
+class StaticDelayModel : public QuantumDelayModel
+{
+public:
+    static TypeId GetTypeId (void);
+
+    StaticDelayModel ();
+    ~StaticDelayModel () override;
+
+    void DoDispose (void) override;
+
+    void SetFixedDelay (Time delay);
+    Time GetFixedDelay (void) const;
+
+protected:
+    void DoUpdateDelay (void) override;
+};
+
 } // namespace ns3
 
 #endif /* QUANTUM_DELAY_MODEL_H */

@@ -33,6 +33,7 @@
 #include "ns3/core-module.h"
 #include "ns3/application.h"
 #include "ns3/quantum-basis.h"
+#include "ns3/quantum-fidelity-model.h"
 #include "ns3/quantum-network-simulator.h"
 #include "ns3/quantum-phy-entity.h"
 #include "ns3/quantum-node.h"
@@ -496,25 +497,23 @@ private:
         {
             return 0.0;
         }
-        
-        double fidelity = 1.0;
-        
-        // Multiply link fidelities (approximate model)
-        for (size_t i = 0; i < path.linkProbabilities.size (); ++i)
+
+        if (path.linkProbabilities.empty ())
         {
-            double linkFidelity = 0.5 + 0.5 * path.linkProbabilities[i];
-            fidelity *= linkFidelity;
+            return 0.0;
         }
-        
-        // Account for swap operations
-        uint32_t numSwaps = static_cast<uint32_t> (path.primaryPath.size ()) - 2;
-        if (numSwaps > 0)
+
+        // This example still maps success probability to a surrogate link fidelity,
+        // but the end-to-end combination now uses the correct Bell-diagonal
+        // entanglement-swapping rule instead of multiplying by an ad hoc swap factor.
+        BellDiagonalState state = MakeWernerState (0.5 + 0.5 * path.linkProbabilities[0]);
+        for (size_t i = 1; i < path.linkProbabilities.size (); ++i)
         {
-            double swapFactor = std::pow (0.9, numSwaps);
-            fidelity *= swapFactor;
+            BellDiagonalState nextLink = MakeWernerState (0.5 + 0.5 * path.linkProbabilities[i]);
+            state = EntanglementSwapBellDiagonal (state, nextLink);
         }
-        
-        return fidelity;
+
+        return GetBellFidelity (state);
     }
 
     void PrintStatistics (const std::vector<RequestResult> &results)

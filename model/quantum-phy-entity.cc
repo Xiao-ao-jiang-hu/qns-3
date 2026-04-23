@@ -31,6 +31,7 @@ QuantumPhyEntity::QuantumPhyEntity (const std::vector<std::string> &owners)
   for (const std::string &owner : owners)
     {
       Ptr<QuantumNode> pnode = CreateObject<QuantumNode> (this, owner);
+      pnode->GetQuantumMemory ()->SetPhyEntity (this);
       m_owner2pnode[owner] = pnode;
       m_gate2model[pnode] = {};
     }
@@ -213,24 +214,11 @@ QuantumPhyEntity::ApplyControlledOperation (
 std::pair<unsigned, std::vector<double>>
 QuantumPhyEntity::Measure (const std::string &owner, const std::vector<std::string> &qubits)
 {
-  Time moment = Simulator::Now ();
   assert (CheckOwned (owner, qubits));
 
-  // Ensure decoherence is applied to all qubits being measured
-  Ptr<QuantumNode> pnode = m_owner2pnode[owner];
-  for (const std::string &qubit : qubits)
-    {
-      pnode->EnsureDecoherence (qubit);
-    }
-
-  for (const std::string &q : m_qnetsim.m_qubits_all)
-    {
-      if (!CheckValid ({q}))
-        {
-          continue;
-        }
-      ApplyErrorModel ({q}, moment);
-    }
+  // Collapse acts on the current global state, so flush all pending
+  // memory decoherence before the measurement modifies that state.
+  EnsureAllDecoherence ();
 
   return m_qnetsim.Measure (owner, qubits);
 }
@@ -445,7 +433,71 @@ QuantumPhyEntity::GenerateEPR (Ptr<QuantumChannel> qconn,
 double 
 QuantumPhyEntity::CalculateFidelity (const std::pair<std::string, std::string> &epr, double &fidel)
 {
+  EnsureAllDecoherence ();
   return m_qnetsim.CalculateFidelity (epr, fidel);
+}
+
+double
+QuantumPhyEntity::GetCoherenceTimeMs (const std::string &owner) const
+{
+  auto nodeIt = m_owner2pnode.find (owner);
+  if (nodeIt == m_owner2pnode.end ())
+    {
+      return 1e12;
+    }
+
+  auto modelIt = m_node2model.find (nodeIt->second);
+  if (modelIt == m_node2model.end () || modelIt->second == nullptr)
+    {
+      return 1e12;
+    }
+
+  Ptr<TimeModel> timeModel = DynamicCast<TimeModel> (modelIt->second);
+  if (timeModel == nullptr || timeModel->GetRate () <= 0.0)
+    {
+      return 1e12;
+    }
+
+  return timeModel->GetRate () * 1000.0;
+}
+
+bool
+QuantumPhyEntity::TransferQubit (const std::string &fromOwner,
+                                 const std::string &toOwner,
+                                 const std::string &qubit)
+{
+  auto fromIt = m_owner2pnode.find (fromOwner);
+  auto toIt = m_owner2pnode.find (toOwner);
+  if (fromIt == m_owner2pnode.end () || toIt == m_owner2pnode.end ())
+    {
+      return false;
+    }
+
+  if (!fromIt->second->OwnQubit (qubit))
+    {
+      return false;
+    }
+
+  if (!fromIt->second->RemoveQubit (qubit))
+    {
+      return false;
+    }
+
+  toIt->second->AddQubit (qubit);
+  Ptr<QuantumErrorModel> model = nullptr;
+  auto modelIt = m_node2model.find (toIt->second);
+  if (modelIt != m_node2model.end ())
+    {
+      model = modelIt->second;
+    }
+  if (model == nullptr)
+    {
+      model = default_time_model.GetObject<QuantumErrorModel> ();
+    }
+
+  SetErrorModel (model, qubit);
+  SetQubitTime (qubit, Simulator::Now ());
+  return true;
 }
 
 

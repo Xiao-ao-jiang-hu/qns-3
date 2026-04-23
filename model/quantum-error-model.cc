@@ -106,6 +106,12 @@ TimeModel::ApplyErrorModel (Ptr<QuantumPhyEntity> qphyent, const std::vector<std
     }
 }
 
+double
+TimeModel::GetRate () const
+{
+  return m_rate;
+}
+
 
 
 

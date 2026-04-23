@@ -3,6 +3,7 @@
 
 #include "ns3/object.h"
 #include "ns3/ptr.h"
+#include "ns3/quantum-fidelity-model.h"
 
 #include <vector>
 #include <string>
@@ -11,21 +12,35 @@
 namespace ns3 {
 
 class QuantumNetworkLayer;
+class QuantumRoutingMetric;
 
 /**
- * \brief Link metrics for routing decisions
+ * \brief Link-attribute carrier shared by routing and link-layer modeling.
+ *
+ * This struct intentionally stores the raw per-link parameters that a routing
+ * metric model may consume, rather than a single precomputed cost. Concrete
+ * QuantumRoutingMetric implementations derive their own surrogate score from
+ * these attributes.
  */
 struct LinkMetrics
 {
     double fidelity;        // Link fidelity (0.0 to 1.0)
+    double initialFidelity; // Initial link EPR fidelity used by the physical model
+    BellPairNoiseFamily noiseFamily; // Initial Bell-pair state family used by routing and link layer
     double successRate;     // Link success probability (0.0 to 1.0)
     double latency;         // Link latency in ms
+    double quantumSetupTimeMs;    // Quantum entanglement setup / heralding time in ms
+    double classicalControlDelayMs; // Classical control latency in ms
     bool isAvailable;       // Whether link is currently available
 
     LinkMetrics ()
         : fidelity (0.0),
+          initialFidelity (0.0),
+          noiseFamily (BellPairNoiseFamily::WERNER),
           successRate (0.0),
           latency (0.0),
+          quantumSetupTimeMs (0.0),
+          classicalControlDelayMs (0.0),
           isAvailable (false)
     {
     }
@@ -175,6 +190,10 @@ public:
         const std::string &dst
     ) = 0;
 
+    virtual void SetMetricModel (Ptr<QuantumRoutingMetric> metricModel);
+
+    virtual Ptr<QuantumRoutingMetric> GetMetricModel () const;
+
     /**
      * \brief Set the local node name
      * 
@@ -194,6 +213,7 @@ public:
 protected:
     std::string m_localNode;           // Name of the node this protocol serves
     QuantumNetworkLayer* m_networkLayer; // Associated network layer (not owned)
+    Ptr<QuantumRoutingMetric> m_metricModel;
 };
 
 } // namespace ns3

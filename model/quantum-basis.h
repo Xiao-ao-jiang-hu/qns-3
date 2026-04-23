@@ -5,6 +5,7 @@
 #include "ns3/ptr.h"
 #include "ns3/nstime.h"
 #include "ns3/simulator.h"
+#include "ns3/quantum-fidelity-model.h"
 #include "ns3/assert.h"
 #include "ns3/log.h"
 #include "ns3/callback.h"
@@ -24,6 +25,7 @@
 #include <string>
 #include <vector>
 #include <complex>
+#include <algorithm>
 #include <map>
 #include <cmath>
 #include <climits>
@@ -153,6 +155,9 @@ const std::vector<std::complex<double>> q_bell = {
     {1. / sqrt (2), 0.0}};
 
 std::vector<std::complex<double>> GetEPRwithFidelity (const double &fidelity);
+std::vector<std::complex<double>> GetEPRwithPhaseFlipFidelity (const double &fidelity);
+std::vector<std::complex<double>> GetEPRwithNoiseFamily (BellPairNoiseFamily family,
+                                                         const double &fidelity);
 
 /** Pauli I gate. */
 const std::vector<std::complex<double>> pauli_I = {{1.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}, {1.0, 0.0}};

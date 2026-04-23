@@ -1,9 +1,11 @@
 #include "ns3/quantum-routing-protocol.h"
 #include "ns3/quantum-channel.h"
 #include "ns3/quantum-network-layer.h"
+#include "ns3/quantum-routing-metric.h"
 
 #include "ns3/log.h"
 #include "ns3/double.h"
+#include "ns3/pointer.h"
 #include "ns3/uinteger.h"
 
 #include <sstream>
@@ -20,13 +22,19 @@ QuantumRoutingProtocol::GetTypeId ()
   static TypeId tid =
       TypeId ("ns3::QuantumRoutingProtocol")
           .SetParent<Object> ()
-          .SetGroupName ("Quantum");
+          .SetGroupName ("Quantum")
+          .AddAttribute ("MetricModel",
+                         "Path-metric model used to evaluate candidate routes.",
+                         PointerValue (),
+                         MakePointerAccessor (&QuantumRoutingProtocol::m_metricModel),
+                         MakePointerChecker<QuantumRoutingMetric> ());
   return tid;
 }
 
 QuantumRoutingProtocol::QuantumRoutingProtocol ()
     : m_localNode (""),
-      m_networkLayer (nullptr)
+      m_networkLayer (nullptr),
+      m_metricModel (nullptr)
 {
   NS_LOG_FUNCTION (this);
 }
@@ -71,6 +79,18 @@ void
 QuantumRoutingProtocol::NotifyTopologyChange (void)
 {
   // Default: nothing to do
+}
+
+void
+QuantumRoutingProtocol::SetMetricModel (Ptr<QuantumRoutingMetric> metricModel)
+{
+  m_metricModel = metricModel;
+}
+
+Ptr<QuantumRoutingMetric>
+QuantumRoutingProtocol::GetMetricModel () const
+{
+  return m_metricModel;
 }
 
 std::string

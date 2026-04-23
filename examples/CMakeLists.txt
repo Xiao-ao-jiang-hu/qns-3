@@ -52,6 +52,12 @@ build_lib_example(
     LIBRARIES_TO_LINK ${libquantum}
 )
 
+build_lib_example(
+    NAME fidelity-formula-check
+    SOURCE_FILES fidelity-formula-check.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
 # quantum network layer
 
 build_lib_example(
@@ -105,6 +111,12 @@ build_lib_example(
 build_lib_example(
     NAME dijkstra-vs-qcast
     SOURCE_FILES dijkstra-vs-qcast.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
+
+build_lib_example(
+    NAME dijkstra-vs-sliced-dijkstra
+    SOURCE_FILES dijkstra-vs-sliced-dijkstra.cc
     LIBRARIES_TO_LINK ${libquantum}
 )
 build_lib_example(

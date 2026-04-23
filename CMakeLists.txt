@@ -32,8 +32,11 @@ build_lib(
                 model/quantum-link-layer-service.cc
                 model/quantum-network-layer.cc
                 model/quantum-routing-protocol.cc
+                model/quantum-routing-metric.cc
+                model/quantum-fidelity-model.cc
                 model/q-cast-routing-protocol.cc
                 model/dijkstra-routing-protocol.cc
+                model/sliced-dijkstra-routing-protocol.cc
                 model/distribute-epr-protocol.cc
                 model/telep-app.cc
                 model/telep-adapt-app.cc
@@ -73,6 +76,8 @@ build_lib(
                 model/quantum-channel.h
                 model/quantum-link-layer-service.h
                 model/quantum-network-layer.h
+                model/quantum-routing-metric.h
+                model/quantum-fidelity-model.h
                 model/quantum-delay-model.h
                 model/quantum-signaling-channel.h
 
@@ -89,6 +94,7 @@ build_lib(
                 model/quantum-routing-protocol.h
                 model/q-cast-routing-protocol.h
                 model/dijkstra-routing-protocol.h
+                model/sliced-dijkstra-routing-protocol.h
                 
                 helper/quantum-basis-helper.h
                 helper/quantum-net-stack-helper.h
@@ -117,4 +123,3 @@ build_lib(
 )
 
 target_include_directories(${libquantum-obj} PUBLIC ${EXATN_INCLUDE_DIRS} ${EXATN_INCLUDE_ROOT})
-

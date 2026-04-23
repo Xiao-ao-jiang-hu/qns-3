@@ -581,4 +581,58 @@ BurstDelayModel::EndBurst (void)
                << ", delay returned to " << m_currentDelay.As (Time::MS));
 }
 
+//=============================================================================
+// StaticDelayModel
+//=============================================================================
+
+NS_OBJECT_ENSURE_REGISTERED (StaticDelayModel);
+
+TypeId
+StaticDelayModel::GetTypeId (void)
+{
+  static TypeId tid =
+      TypeId ("ns3::StaticDelayModel")
+          .SetParent<QuantumDelayModel> ()
+          .SetGroupName ("Quantum")
+          .AddConstructor<StaticDelayModel> ();
+  return tid;
+}
+
+StaticDelayModel::StaticDelayModel ()
+{
+  NS_LOG_FUNCTION (this);
+}
+
+StaticDelayModel::~StaticDelayModel ()
+{
+  NS_LOG_FUNCTION (this);
+}
+
+void
+StaticDelayModel::DoDispose (void)
+{
+  NS_LOG_FUNCTION (this);
+  QuantumDelayModel::DoDispose ();
+}
+
+void
+StaticDelayModel::SetFixedDelay (Time delay)
+{
+  SetBaseDelay (delay);
+  m_currentDelay = delay;
+}
+
+Time
+StaticDelayModel::GetFixedDelay (void) const
+{
+  return GetCurrentDelay ();
+}
+
+void
+StaticDelayModel::DoUpdateDelay (void)
+{
+  m_currentDelay = m_baseDelay;
+  RecordDelay (false);
+}
+
 } // namespace ns3

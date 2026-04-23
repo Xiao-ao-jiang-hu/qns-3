@@ -11,24 +11,37 @@
 \section{路径拼接模型与路由度量}
 \label{sec:path-model}
 
-\subsection{路径拼接的保真度公式}
+\subsection{路径拼接的Bell对角递推公式}
 
-在多跳量子网络路由中，一条端到端路径通常由若干子路径拼接而成。设路径$p$的端节点为$v_s$（源）和$v_m$（枢轴节点），路径$c$的端节点为$v_m$和$v_d$（目的），则拼接路径$p \oplus c$的端到端保真度为：
-
+在多跳量子网络路由中，一条端到端路径通常由若干子路径拼接而成。对qns-3当前的混态物理模型而言，路径状态的正确闭包对象不是单个标量保真度$F$，而是Bell对角权重向量
 \begin{equation}
-  F(p \oplus c) = F(p) \cdot F(c) \cdot \exp\!\left(-T_p \cdot \frac{1}{\tau_m} - (T_p + \delta_m) \cdot S_c\right)
+  w(P) = \bigl(a_P, b_P, c_P, d_P\bigr),
+  \qquad
+  F(P) = a_P.
+\end{equation}
+设路径$p$的端节点为$v_s$和$v_m$，路径$c$的端节点为$v_m$和$v_d$。若某一段路径更早ready，则需先对其施加等待诱导的Bell对角退相干算子$\mathcal{M}_\Lambda$；记处理后的两段状态分别为$\widetilde{w}(p)$和$\widetilde{w}(c)$，则拼接路径$p \oplus c$的端到端状态满足
+\begin{equation}
+  w(p \oplus c) = \mathcal{S}\!\bigl(\widetilde{w}(p), \widetilde{w}(c)\bigr),
   \label{eq:path-concat}
 \end{equation}
-
-其中：
-\begin{itemize}
-  \item $T_p = \sum_{i \in p} \delta_i$ 为路径$p$的累积经典时延；
-  \item $\tau_m$ 为枢轴节点$v_m$的相干时间；
-  \item $\delta_m$ 为枢轴节点与路径$c$首节点之间的链路时延；
-  \item $S_c = \sum_{k \in c} 1/\tau_k$ 为路径$c$上各节点退相干敏感度之和（不含枢轴节点本身）。
-\end{itemize}
-
-式~\eqref{eq:path-concat}表明，路径$p$的累积时延$T_p$不仅通过$e^{-T_p/\tau_m}$损耗枢轴节点处的量子比特，还通过乘以$S_c$向后续路径$c$上的所有节点传递额外的退相干压力。这一"时延放大"效应是导致路由非保序性的物理根源。
+其中$\mathcal{S}$为Bell对角态在理想纠缠交换下的卷积算子：
+\begin{align}
+  a_{p \oplus c} &= \tilde{a}_p \tilde{a}_c + \tilde{b}_p \tilde{b}_c
+                 + \tilde{c}_p \tilde{c}_c + \tilde{d}_p \tilde{d}_c, \notag\\
+  b_{p \oplus c} &= \tilde{a}_p \tilde{b}_c + \tilde{b}_p \tilde{a}_c
+                 + \tilde{c}_p \tilde{d}_c + \tilde{d}_p \tilde{c}_c, \notag\\
+  c_{p \oplus c} &= \tilde{a}_p \tilde{c}_c + \tilde{c}_p \tilde{a}_c
+                 + \tilde{b}_p \tilde{d}_c + \tilde{d}_p \tilde{b}_c, \notag\\
+  d_{p \oplus c} &= \tilde{a}_p \tilde{d}_c + \tilde{d}_p \tilde{a}_c
+                 + \tilde{b}_p \tilde{c}_c + \tilde{c}_p \tilde{b}_c. \label{eq:path-concat-expanded}
+\end{align}
+因此，端到端保真度等于$w(p \oplus c)$的第一个分量，而不是简单的$F(p)F(c)$。特别地，在\emph{无额外等待}且两段输入均为Werner态的特例下，
+\begin{equation}
+  F(p \oplus c)
+  = F(p)F(c) + \frac{(1 - F(p))(1 - F(c))}{3},
+  \label{eq:path-concat-werner}
+\end{equation}
+这才是当前模拟器物理层与理想纠缠交换所对应的正确闭式。
 
 \subsection{Q-CAST路由度量}
 
@@ -51,28 +64,35 @@ Q-CAST协议以期望吞吐量$E_t$作为路径度量（详见第~\ref{sec:qcast
 \end{equation}
 即局部最优路径拼接后仍为全局最优。对于以保真度为优化目标的量子路由而言，若保序性成立，则可使用标准Dijkstra算法逐跳贪心选择，保证全局最优性。
 
-然而，Q-CAST的$E_t$度量\textbf{不满足保序性}。本节通过构造最坏情况场景，给出保序比$\eta = F(a \oplus c)/F(b \oplus c)$的下确界为零，定量刻画这一缺陷的严重程度。
+然而，Q-CAST的$E_t$度量\textbf{不满足保序性}。本节通过构造最坏情况场景，给出surrogate保序比$\widehat{\eta} = \widehat{F}(a \oplus c)/\widehat{F}(b \oplus c)$的下确界为零，定量刻画这一缺陷的严重程度。
 
-\subsection{保序比的精确表达式}
+\subsection{保序比的 surrogate 表达式}
 
-设两条到达同一枢轴节点$v_m$的路径$a$和$b$，由式~\eqref{eq:path-concat}可得：
+严格物理模型下，式~\eqref{eq:path-concat}是Bell对角向量递推，难以压缩为单个标量保真度的乘法闭式。若为了做最坏情况拓扑的直观估算，再进一步采用一阶标量化近似
+\begin{equation}
+  \widehat{F}(p \oplus c)
+  = \widehat{F}(p)\widehat{F}(c)
+    \exp\!\left(-T_p \cdot \frac{1}{\tau_m} - (T_p + \delta_m) \cdot S_c\right),
+  \label{eq:path-concat-surrogate}
+\end{equation}
+其中$T_p = \sum_{i \in p}\delta_i$，$S_c = \sum_{k \in c} 1/\tau_k$，则对两条到达同一枢轴节点$v_m$的路径$a$和$b$可得到如下surrogate比值：
 
 \begin{equation}
-  \eta \triangleq \frac{F(a \oplus c)}{F(b \oplus c)}
-  = \frac{F(a)}{F(b)} \cdot \exp\!\Bigl(-(T_a - T_b) \cdot D_c\Bigr)
+  \widehat{\eta} \triangleq \frac{\widehat{F}(a \oplus c)}{\widehat{F}(b \oplus c)}
+  = \frac{\widehat{F}(a)}{\widehat{F}(b)} \cdot \exp\!\Bigl(-(T_a - T_b) \cdot D_c\Bigr)
   \label{eq:eta}
 \end{equation}
 
-其中$D_c \triangleq 1/\tau_m + S_c \geq 0$为后续路径$c$对经典时延的总敏感度（decay factor），包含枢轴节点和路径$c$上所有节点的退相干贡献。公因子$F(c)$和$e^{-\delta_m S_c}$在分子分母中相消，不影响$\eta$。
+其中$D_c \triangleq 1/\tau_m + S_c \geq 0$为后续路径$c$对经典时延的总敏感度（decay factor），包含枢轴节点和路径$c$上所有节点的退相干贡献。公因子$\widehat{F}(c)$和$e^{-\delta_m S_c}$在分子分母中相消，不影响$\widehat{\eta}$。下面的最坏情况分析应理解为对这一surrogate模型的解释；其物理根源仍来自式~\eqref{eq:path-concat}所描述的Bell对角等待-交换递推。
 
 \subsection{下确界的推导}
 
 \begin{equation}
-  \inf \eta = 0
+  \inf \widehat{\eta} = 0
   \label{eq:inf-eta}
 \end{equation}
 
-\textbf{证明：}在约束$F(a) \geq F(b)$（即路径$a$在Q-CAST意义下不劣于路径$b$）的前提下，构造如下极端参数场景：
+\textbf{证明：}在约束$\widehat{F}(a) \geq \widehat{F}(b)$（即路径$a$在该surrogate模型下不劣于路径$b$）的前提下，构造如下极端参数场景：
 
 \begin{itemize}
   \item \textbf{路径$a$（高延迟-高质量内存）：}路径$a$由高延迟链路（$\delta_i^{(a)} \sim O(\text{百ms})$）和相干时间极长的节点（$\tau_k^{(a)} \to \infty$）构成，使得其自身保真度$F(a) \approx F_0$几乎无衰减，但累积时延$T_a \to \infty$；
@@ -80,16 +100,16 @@ Q-CAST协议以期望吞吐量$E_t$作为路径度量（详见第~\ref{sec:qcast
   \item \textbf{路径$c$（高敏感度后续路径）：}枢轴节点$v_m$或路径$c$上包含相干时间极短的节点，$\tau_m \to 0$ 或 $S_c \to \infty$，使得$D_c \to \infty$。
 \end{itemize}
 
-上述构造满足$F(a) \approx F(b) \approx F_0$（约束$F(a) \geq F(b)$以等号成立的形式满足），代入式~\eqref{eq:eta}：
+上述构造满足$\widehat{F}(a) \approx \widehat{F}(b) \approx F_0$（约束$\widehat{F}(a) \geq \widehat{F}(b)$以等号成立的形式满足），代入式~\eqref{eq:eta}：
 \begin{equation}
-  \eta = 1 \cdot \exp\!\bigl(-(T_a - 0) \cdot D_c\bigr) \xrightarrow{T_a \to \infty,\; D_c > 0} e^{-\infty} = 0
+  \widehat{\eta} = 1 \cdot \exp\!\bigl(-(T_a - 0) \cdot D_c\bigr) \xrightarrow{T_a \to \infty,\; D_c > 0} e^{-\infty} = 0
   \label{eq:eta-limit}
 \end{equation}
-因此$\inf \eta = 0$。\hfill$\square$
+因此$\inf \widehat{\eta} = 0$。\hfill$\square$
 
 \subsection{物理直觉}
 
-上述结论的物理含义是：路径$a$依赖"高质量存储器缓冲高延迟"策略（慢而准），其路由度量（保真度）与$b$相当甚至更优；但一旦接入含有劣质存储器的后续路径$c$，路径$a$积累的大量经典时延$T_a$将通过式~\eqref{eq:path-concat}中的$T_a \cdot S_c$项急速放大，导致端到端保真度远低于路径$b$。Q-CAST的$E_t$度量完全无法感知这一效应，因而在上述"错配"（mismatch）场景下做出错误的路由决策。
+上述结论的物理含义是：路径$a$依赖"高质量存储器缓冲高延迟"策略（慢而准），其路由度量（保真度）与$b$相当甚至更优；但一旦接入含有劣质存储器的后续路径$c$，路径$a$积累的大量经典时延会通过式~\eqref{eq:path-concat-surrogate}中的指数项被后续劣质存储器放大，在严格模型中则体现为Bell对角权重向量在等待与交换递推中的系统性劣化，最终导致端到端保真度远低于路径$b$。Q-CAST的$E_t$度量完全无法感知这一效应，因而在上述"错配"（mismatch）场景下做出错误的路由决策。
 
 \section{最坏情况拓扑的构造策略}
 \label{sec:mismatch-topology}
@@ -161,15 +181,15 @@ Q-CAST协议以期望吞吐量$E_t$作为路径度量（详见第~\ref{sec:qcast
 
 在此子图中，路径$a$（陷阱路径）通过一条500\,ms的高延迟链路到达枢轴节点$v_m$，但沿途节点均为完美存储器（$\tau = 10^4$\,s），其自身保真度$F(a)$几乎不衰减；路径$b$（公路路径）全程使用5\,ms低延迟链路，但沿途节点为劣质存储器（$\tau = 1$\,s）。两条路径保真度相近，但$T_a = 500$\,ms $\gg T_b = 5$\,ms。枢轴节点$v_m$及后续路径$v_d$均为劣质节点，$D_c = 1/\tau_m + 1/\tau_d \approx 2$\,s$^{-1}$。
 
-代入式~\eqref{eq:eta}，估算保序比：
+代入式~\eqref{eq:eta}，估算surrogate保序比：
 \begin{align}
-  \eta &= \frac{F(a)}{F(b)} \cdot \exp\!\bigl(-(T_a - T_b) \cdot D_c\bigr) \notag \\
+  \widehat{\eta} &= \frac{\widehat{F}(a)}{\widehat{F}(b)} \cdot \exp\!\bigl(-(T_a - T_b) \cdot D_c\bigr) \notag \\
        &\approx 1 \cdot \exp\!\bigl(-(0.5 - 0.005)\,\text{s} \times 2\,\text{s}^{-1}\bigr) \notag \\
        &= e^{-0.99} \approx 0.37
   \label{eq:eta-example}
 \end{align}
 
-即Q-CAST选择保真度优先的路径$a$后，实际端到端保真度仅为选择路径$b$的37\%，出现严重的路由决策失误。若$D_c$更大（如枢轴节点后接多个劣质中继），$\eta$可趋近于零。
+即Q-CAST选择保真度优先的路径$a$后，实际端到端保真度仅为选择路径$b$的37\%，出现严重的路由决策失误。若$D_c$更大（如枢轴节点后接多个劣质中继），$\widehat{\eta}$可趋近于零。
 
 \subsection{与Q-CAST度量的对比}
 
@@ -209,7 +229,7 @@ Q-CAST协议以期望吞吐量$E_t$作为路径度量（详见第~\ref{sec:qcast
 \end{equation}
 代入式~\eqref{eq:eta}：
 \begin{align}
-  \eta &= \frac{F(a)}{F(b)} \cdot \exp\!\bigl(-(T_a - T_b) \cdot D_c\bigr) \notag \\
+  \widehat{\eta} &= \frac{\widehat{F}(a)}{\widehat{F}(b)} \cdot \exp\!\bigl(-(T_a - T_b) \cdot D_c\bigr) \notag \\
        &\approx 1 \cdot \exp\!\bigl(-(0.099 - 0.010)\,\text{s} \times 20\,\text{s}^{-1}\bigr) \notag \\
        &= e^{-1.78} \approx 0.17
   \label{eq:eta-satellite}

@@ -17,12 +17,13 @@
 #include "ns3/quantum-phy-entity.h"
 #include "ns3/quantum-node.h"
 #include "ns3/quantum-channel.h"
+#include "ns3/dijkstra-routing-protocol.h"
+#include "ns3/quantum-link-layer-service.h"
 #include "ns3/quantum-network-layer.h"
-#include "ns3/distribute-epr-helper.h"
-#include "ns3/distribute-epr-protocol.h"
 #include "ns3/quantum-net-stack-helper.h"
 
 #include <iostream>
+#include <memory>
 #include <vector>
 
 NS_LOG_COMPONENT_DEFINE ("QuantumNetworkLayerExample");
@@ -35,7 +36,7 @@ using namespace ns3;
 /**
  * \brief Application that uses the quantum network layer to establish paths
  */
-class QuantumPathUserApp : public Application
+class QuantumPathUserApp
 {
 public:
   QuantumPathUserApp (Ptr<QuantumNetworkLayer> netLayer, const std::string &myName)
@@ -64,7 +65,8 @@ public:
         // Get path info
         PathInfo info = m_netLayer->GetPathInfo (pathId);
         NS_LOG_INFO (m_myName << ": Route: " << RouteToString (info.route));
-        NS_LOG_INFO (m_myName << ": End-to-end fidelity meets requirement: " << info.minFidelity);
+        NS_LOG_INFO (m_myName << ": End-to-end fidelity=" << info.actualFidelity
+                     << " (threshold=" << info.minFidelity << ")");
       }
     else
       {
@@ -105,6 +107,10 @@ main ()
     }
   
   Ptr<QuantumPhyEntity> qphyent = CreateObject<QuantumPhyEntity> (owners);
+  for (const auto& owner : owners)
+    {
+      qphyent->SetTimeModel (owner, 1000.0);
+    }
   
   NodeContainer nodes;
   for (int i = 0; i < NUM_NODES; ++i)
@@ -145,6 +151,8 @@ main ()
   // Create and configure network layers for each node
   //
   std::vector<Ptr<QuantumNetworkLayer>> netLayers;
+  Ptr<QuantumLinkLayerService> sharedLinkLayer = CreateObject<QuantumLinkLayerService> ();
+  sharedLinkLayer->SetPhyEntity (qphyent);
   
   for (int i = 0; i < NUM_NODES; ++i)
     {
@@ -152,18 +160,20 @@ main ()
       Ptr<QuantumNetworkLayer> netLayer = CreateObject<QuantumNetworkLayer> ();
       netLayer->SetOwner (nodeName);
       netLayer->SetPhyEntity (qphyent);
+      netLayer->SetLinkLayer (sharedLinkLayer);
+      netLayer->SetRoutingProtocol (CreateObject<DijkstraRoutingProtocol> ());
       
       // Add neighbors (linear topology)
       if (i > 0)
         {
           std::string prevNode = "Node" + std::to_string (i - 1);
           Ptr<QuantumChannel> channel = CreateObject<QuantumChannel> (prevNode, nodeName);
-          netLayer->AddNeighbor (prevNode, channel, 0.95, 0.9);
+          netLayer->AddNeighbor (prevNode, channel, 0.98, 1.0, 5.0, 5.0);
           
           // Also add to previous node's network layer
           if (i - 1 >= 0)
             {
-              netLayers[i - 1]->AddNeighbor (nodeName, channel, 0.95, 0.9);
+              netLayers[i - 1]->AddNeighbor (nodeName, channel, 0.98, 1.0, 5.0, 5.0);
             }
         }
       
@@ -179,43 +189,22 @@ main ()
     }
 
   //
-  // Set up link layer services (simplified - using a mock)
-  // In a real implementation, this would be actual link layer protocols
+  // Finalize network-layer initialization after the full topology is known.
   //
-  
+  for (auto& netLayer : netLayers)
+    {
+      netLayer->Initialize ();
+    }
+
   //
   // Create path user applications
   //
   
   // Node0 will establish a path to Node4
-  Ptr<QuantumPathUserApp> app0 = CreateObject<QuantumPathUserApp> (netLayers[0], "Node0");
-  nodes.Get (0)->AddApplication (app0);
-  app0->SetStartTime (Seconds (0.1));
+  auto app0 = std::make_shared<QuantumPathUserApp> (netLayers[0], "Node0");
   
   // Schedule path setup
-  Simulator::Schedule (Seconds (0.5), &QuantumPathUserApp::SetupPathTo, app0, "Node4", 0.85);
-
-  //
-  // Also set up some intermediate entanglements for testing
-  //
-  for (int i = 0; i < NUM_NODES - 1; ++i)
-    {
-      std::string srcOwner = "Node" + std::to_string (i);
-      std::string dstOwner = "Node" + std::to_string (i + 1);
-      Ptr<QuantumChannel> qconn = CreateObject<QuantumChannel> (srcOwner, dstOwner);
-      
-      // Set depolarization model for the channel
-      qconn->SetDepolarModel (0.95, qphyent);
-      
-      // Generate and distribute EPR pairs
-      Ptr<DistributeEPRSrcProtocol> distEprSrc =
-          qphyent->GetConn2Apps (qconn, APP_DIST_EPR).first->GetObject<DistributeEPRSrcProtocol> ();
-      
-      Simulator::Schedule (Seconds (CLASSICAL_DELAY * (i + 1)),
-                           &DistributeEPRSrcProtocol::GenerateAndDistributeEPR, distEprSrc,
-                           std::pair<std::string, std::string>{
-                               srcOwner + "_EPR_" + dstOwner, dstOwner + "_EPR_" + srcOwner});
-    }
+  Simulator::Schedule (Seconds (0.5), &QuantumPathUserApp::SetupPathTo, app0.get (), "Node4", 0.7);
 
   //
   // Run simulation

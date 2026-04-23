@@ -1,34 +1,23 @@
-#ifndef DIJKSTRA_ROUTING_PROTOCOL_H
-#define DIJKSTRA_ROUTING_PROTOCOL_H
+#ifndef SLICED_DIJKSTRA_ROUTING_PROTOCOL_H
+#define SLICED_DIJKSTRA_ROUTING_PROTOCOL_H
 
-#include "ns3/quantum-routing-protocol.h"
 #include "ns3/quantum-network-layer.h"
 #include "ns3/quantum-routing-metric.h"
+#include "ns3/quantum-routing-protocol.h"
 
-#include <vector>
-#include <string>
 #include <map>
-#include <queue>
-#include <limits>
+#include <string>
+#include <vector>
 
 namespace ns3 {
 
-/**
- * \brief Single-label best-first routing baseline for quantum networks.
- *
- * This protocol keeps exactly one incumbent label per node and relies on the
- * configured QuantumRoutingMetric to score path prefixes. Under additive
- * shortest-path metrics it behaves like classic Dijkstra; under non-additive
- * fidelity models it serves as the K=1 baseline against multi-label variants
- * such as SlicedDijkstraRoutingProtocol.
- */
-class DijkstraRoutingProtocol : public QuantumRoutingProtocol
+class SlicedDijkstraRoutingProtocol : public QuantumRoutingProtocol
 {
 public:
     static TypeId GetTypeId (void);
 
-    DijkstraRoutingProtocol ();
-    ~DijkstraRoutingProtocol () override;
+    SlicedDijkstraRoutingProtocol ();
+    ~SlicedDijkstraRoutingProtocol () override;
 
     void DoDispose (void) override;
 
@@ -53,23 +42,33 @@ public:
 
 protected:
     /**
-     * \brief Compute the best single-label route under the shared surrogate metric.
-     * \param src Source node
-     * \param dst Destination node
-     * \return Path as vector of node names, empty if not found
+     * \brief Multi-label best-first search with optional Tmax bucket slicing.
+     *
+     * Each node may retain up to K labels. When bucket slicing is enabled,
+     * labels are diversified along the metric-provided `t_max_ms` axis so that
+     * fast and slow prefixes can coexist at the same frontier node.
      */
-    QuantumRoutingLabel RunSingleLabelSearch (const std::string &src, const std::string &dst);
+    QuantumRoutingLabel RunMultiLabelSearch (
+        const std::string &src,
+        const std::string &dst,
+        std::map<std::string, std::vector<QuantumRoutingLabel>> &labelsByNode);
+
+    bool AdmitLabel (const std::string &node,
+                     const QuantumRoutingLabel &candidate,
+                     std::map<std::string, std::vector<QuantumRoutingLabel>> &labelsByNode) const;
+
+    int64_t GetBucketId (const QuantumRoutingLabel &state) const;
 
     std::map<std::string, std::map<std::string, LinkMetrics>> m_topology;
-
     std::map<std::string, std::map<std::string, std::vector<std::string>>> m_routes;
     std::map<std::string, std::map<std::string, double>> m_routeMetrics;
     std::map<std::string, std::vector<QuantumRoutingLabel>> m_lastLabelsByNode;
 
-    uint32_t m_routesComputed;
-    uint32_t m_routesFailed;
+    uint32_t m_k;
+    double m_bucketWidthMs;
+    bool m_useBuckets;
 };
 
 } // namespace ns3
 
-#endif /* DIJKSTRA_ROUTING_PROTOCOL_H */
+#endif /* SLICED_DIJKSTRA_ROUTING_PROTOCOL_H */

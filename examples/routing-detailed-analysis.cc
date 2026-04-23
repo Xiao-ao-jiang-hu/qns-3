@@ -14,6 +14,7 @@
 
 #include "ns3/core-module.h"
 #include "ns3/quantum-routing-protocol.h"
+#include "ns3/quantum-fidelity-model.h"
 #include "ns3/dijkstra-routing-protocol.h"
 #include "ns3/q-cast-routing-protocol.h"
 
@@ -98,7 +99,8 @@ CalculatePathFidelity (const std::vector<std::string> &path,
     if (path.size () < 2)
         return 0.0;
 
-    double fidelity = 1.0;
+    BellDiagonalState state;
+    bool initialized = false;
     for (size_t i = 0; i < path.size () - 1; ++i)
     {
         const std::string &u = path[i];
@@ -109,9 +111,18 @@ CalculatePathFidelity (const std::vector<std::string> &path,
         {
             linkFidelity = topology.at (u).at (v).fidelity;
         }
-        fidelity *= linkFidelity;
+
+        if (!initialized)
+        {
+            state = MakeWernerState (linkFidelity);
+            initialized = true;
+        }
+        else
+        {
+            state = EntanglementSwapBellDiagonal (state, MakeWernerState (linkFidelity));
+        }
     }
-    return fidelity;
+    return initialized ? GetBellFidelity (state) : 0.0;
 }
 
 static RunDetail

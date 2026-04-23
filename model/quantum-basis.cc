@@ -130,4 +130,28 @@ std::vector<std::complex<double>> GetEPRwithFidelity (const double &f)
   return epr_dm;
 }
 
+std::vector<std::complex<double>>
+GetEPRwithPhaseFlipFidelity (const double &f)
+{
+  const double clampedFidelity = std::max (0.0, std::min (1.0, f));
+  const double coherence = 0.5 * (2.0 * clampedFidelity - 1.0);
+  return {{0.5, 0.0}, {0.0, 0.0}, {0.0, 0.0}, {coherence, 0.0},
+          {0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0},
+          {0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0},
+          {coherence, 0.0}, {0.0, 0.0}, {0.0, 0.0}, {0.5, 0.0}};
+}
+
+std::vector<std::complex<double>>
+GetEPRwithNoiseFamily (BellPairNoiseFamily family, const double &fidelity)
+{
+  switch (family)
+    {
+    case BellPairNoiseFamily::PHASE_FLIP:
+      return GetEPRwithPhaseFlipFidelity (fidelity);
+    case BellPairNoiseFamily::WERNER:
+    default:
+      return GetEPRwithFidelity (fidelity);
+    }
+}
+
 } // namespace ns3

@@ -2,6 +2,7 @@
 
 #include "ns3/log.h"
 #include "ns3/simulator.h"
+
 #include <algorithm>
 
 namespace ns3 {
@@ -40,6 +41,7 @@ DijkstraRoutingProtocol::DoDispose (void)
     m_topology.clear ();
     m_routes.clear ();
     m_routeMetrics.clear ();
+    m_lastLabelsByNode.clear ();
     QuantumRoutingProtocol::DoDispose ();
 }
 
@@ -47,13 +49,17 @@ void
 DijkstraRoutingProtocol::Initialize (void)
 {
     NS_LOG_FUNCTION (this);
+    if (m_metricModel == nullptr)
+    {
+        m_metricModel = CreateObject<BottleneckFidelityRoutingMetric> ();
+    }
 }
 
 void
 DijkstraRoutingProtocol::SetNetworkLayer (QuantumNetworkLayer* netLayer)
 {
     NS_LOG_FUNCTION (this << netLayer);
-    m_networkLayer = netLayer;
+    QuantumRoutingProtocol::SetNetworkLayer (netLayer);
 }
 
 std::vector<std::string>
@@ -73,8 +79,8 @@ DijkstraRoutingProtocol::CalculateRoute (const std::string &src, const std::stri
         return m_routes[src][dst];
     }
 
-    // Run Dijkstra algorithm
-    std::vector<std::string> route = RunDijkstra (src, dst);
+    QuantumRoutingLabel bestState = RunSingleLabelSearch (src, dst);
+    std::vector<std::string> route = bestState.path;
 
     if (route.empty ())
     {
@@ -85,6 +91,7 @@ DijkstraRoutingProtocol::CalculateRoute (const std::string &src, const std::stri
     {
         m_routesComputed++;
         m_routes[src][dst] = route;
+        m_routeMetrics[src][dst] = m_metricModel->GetScore (bestState);
     }
 
     return route;
@@ -97,6 +104,7 @@ DijkstraRoutingProtocol::NotifyTopologyChange (void)
     // Clear all cached routes
     m_routes.clear ();
     m_routeMetrics.clear ();
+    m_lastLabelsByNode.clear ();
     NS_LOG_INFO ("Topology changed, clearing all cached routes");
 }
 
@@ -122,6 +130,7 @@ DijkstraRoutingProtocol::UpdateTopology (
     m_topology = topology;
     m_routes.clear ();
     m_routeMetrics.clear ();
+    m_lastLabelsByNode.clear ();
 }
 
 void
@@ -133,6 +142,7 @@ DijkstraRoutingProtocol::AddNeighbor (const std::string &node,
     m_topology[node][neighbor] = metrics;
     m_routes.clear ();
     m_routeMetrics.clear ();
+    m_lastLabelsByNode.clear ();
 }
 
 void
@@ -145,6 +155,7 @@ DijkstraRoutingProtocol::RemoveNeighbor (const std::string &node,
         m_topology[node].erase (neighbor);
         m_routes.clear ();
         m_routeMetrics.clear ();
+        m_lastLabelsByNode.clear ();
     }
 }
 
@@ -157,6 +168,7 @@ DijkstraRoutingProtocol::UpdateLinkMetrics (const std::string &node,
     m_topology[node][neighbor] = metrics;
     m_routes.clear ();
     m_routeMetrics.clear ();
+    m_lastLabelsByNode.clear ();
 }
 
 bool
@@ -171,8 +183,8 @@ DijkstraRoutingProtocol::HasRoute (const std::string &src, const std::string &ds
     }
 
     // Try to find route
-    std::vector<std::string> route = RunDijkstra (src, dst);
-    return !route.empty ();
+    QuantumRoutingLabel state = RunSingleLabelSearch (src, dst);
+    return !state.path.empty ();
 }
 
 double
@@ -185,137 +197,131 @@ DijkstraRoutingProtocol::GetRouteMetric (const std::string &src, const std::stri
         return m_routeMetrics[src][dst];
     }
 
-    // Calculate route
-    std::vector<std::string> route = RunDijkstra (src, dst);
-    if (route.empty ())
+    QuantumRoutingLabel state = RunSingleLabelSearch (src, dst);
+    if (state.path.empty ())
     {
         return std::numeric_limits<double>::infinity ();
     }
 
-    // Calculate total cost
-    double totalCost = 0.0;
-    for (size_t i = 0; i < route.size () - 1; ++i)
-    {
-        std::string u = route[i];
-        std::string v = route[i + 1];
-        if (m_topology.count (u) && m_topology[u].count (v))
-        {
-            totalCost += CalculateLinkCost (m_topology[u][v]);
-        }
-    }
-
-    m_routeMetrics[src][dst] = totalCost;
-    return totalCost;
+    m_routeMetrics[src][dst] = m_metricModel->GetScore (state);
+    return m_routeMetrics[src][dst];
 }
 
-std::vector<std::string>
-DijkstraRoutingProtocol::RunDijkstra (const std::string &src, const std::string &dst)
+std::vector<QuantumRoutingLabel>
+DijkstraRoutingProtocol::GetNodeLabels (const std::string &node) const
+{
+    auto it = m_lastLabelsByNode.find (node);
+    if (it == m_lastLabelsByNode.end ())
+    {
+        return {};
+    }
+    return it->second;
+}
+
+QuantumRoutingLabel
+DijkstraRoutingProtocol::RunSingleLabelSearch (const std::string &src, const std::string &dst)
 {
     NS_LOG_FUNCTION (this << src << dst);
 
     if (m_topology.empty ())
     {
         NS_LOG_WARN ("Topology is empty");
-        return {};
+        m_lastLabelsByNode.clear ();
+        return QuantumRoutingLabel{};
     }
 
-    // Priority queue: (distance, node)
-    using NodeDist = std::pair<double, std::string>;
-    std::priority_queue<NodeDist, std::vector<NodeDist>, std::greater<NodeDist>> pq;
-
-    // Distance and predecessor maps
-    std::map<std::string, double> dist;
-    std::map<std::string, std::string> prev;
-
-    // Initialize
-    for (const auto &entry : m_topology)
+    if (m_metricModel == nullptr)
     {
-        dist[entry.first] = std::numeric_limits<double>::infinity ();
+        m_metricModel = CreateObject<BottleneckFidelityRoutingMetric> ();
     }
-    dist[src] = 0.0;
-    pq.push ({0.0, src});
 
-    while (!pq.empty ())
+    struct QueueEntry
     {
-        auto top = pq.top ();
-        pq.pop ();
-        double d = top.first;
-        std::string u = top.second;
+        double score;
+        QuantumRoutingLabel state;
 
-        if (u == dst)
+        bool operator< (const QueueEntry &other) const
         {
-            break;
+            return score < other.score;
         }
+    };
 
-        if (d > dist[u])
+    std::priority_queue<QueueEntry> frontier;
+    std::map<std::string, QuantumRoutingLabel> bestByNode;
+
+    QuantumRoutingLabel start = m_metricModel->CreateInitialLabel (src);
+    frontier.push ({m_metricModel->GetScore (start), start});
+    bestByNode[src] = start;
+
+    QuantumRoutingLabel bestDestination;
+
+    while (!frontier.empty ())
+    {
+        QueueEntry entry = frontier.top ();
+        frontier.pop ();
+
+        const QuantumRoutingLabel &current = entry.state;
+        const std::string &node = current.path.back ();
+
+        auto bestIt = bestByNode.find (node);
+        if (bestIt != bestByNode.end () && m_metricModel->IsBetter (bestIt->second, current) &&
+            bestIt->second.path != current.path)
         {
             continue;
         }
 
-        // Explore neighbors
-        if (m_topology.count (u))
+        if (node == dst)
         {
-            for (const auto &entry : m_topology[u])
+            if (bestDestination.path.empty () ||
+                m_metricModel->IsBetter (current, bestDestination))
             {
-                std::string v = entry.first;
-                const LinkMetrics &metrics = entry.second;
-
-                if (!metrics.isAvailable)
-                {
-                    continue;
-                }
-
-                double cost = CalculateLinkCost (metrics);
-                double newDist = dist[u] + cost;
-
-                if (newDist < dist[v])
-                {
-                    dist[v] = newDist;
-                    prev[v] = u;
-                    pq.push ({newDist, v});
-                }
+                bestDestination = current;
             }
+            continue;
         }
-    }
 
-    // Reconstruct path
-    if (prev.find (dst) == prev.end ())
-    {
-        NS_LOG_DEBUG ("No path from " << src << " to " << dst);
-        return {};
-    }
-
-    std::vector<std::string> path;
-    std::string current = dst;
-    while (current != src)
-    {
-        path.push_back (current);
-        current = prev[current];
-        if (prev.find (current) == prev.end () && current != src)
+        auto topoIt = m_topology.find (node);
+        if (topoIt == m_topology.end ())
         {
-            NS_LOG_ERROR ("Path reconstruction failed");
-            return {};
+            continue;
+        }
+
+        for (const auto &neighborEntry : topoIt->second)
+        {
+            QuantumRoutingLabel next;
+            if (!m_metricModel->ExtendLabel (m_networkLayer,
+                                             current,
+                                             neighborEntry.first,
+                                             neighborEntry.second,
+                                             next))
+            {
+                continue;
+            }
+
+            auto incumbent = bestByNode.find (neighborEntry.first);
+            if (incumbent != bestByNode.end () &&
+                !m_metricModel->IsBetter (next, incumbent->second))
+            {
+                continue;
+            }
+
+            bestByNode[neighborEntry.first] = next;
+            frontier.push ({m_metricModel->GetScore (next), next});
         }
     }
-    path.push_back (src);
-    std::reverse (path.begin (), path.end ());
 
-    NS_LOG_DEBUG ("Dijkstra path: " << RouteToString (path));
-    return path;
-}
+    if (!bestDestination.path.empty ())
+    {
+        NS_LOG_DEBUG ("Single-label Dijkstra path: " << RouteToString (bestDestination.path));
+    }
 
-double
-DijkstraRoutingProtocol::CalculateLinkCost (const LinkMetrics &metrics) const
-{
-    NS_LOG_FUNCTION (this);
-    
-    // Cost is based on inverse of fidelity and success rate
-    // Higher fidelity and success rate = lower cost
-    double fidelityCost = 1.0 / (metrics.fidelity + 1e-10);
-    double successCost = 1.0 / (metrics.successRate + 1e-10);
-    
-    // Weighted combination
-    return 0.5 * fidelityCost + 0.5 * successCost;
+    m_lastLabelsByNode.clear ();
+    for (const auto &entry : bestByNode)
+    {
+        m_lastLabelsByNode[entry.first].push_back (entry.second);
+    }
+
+    return bestDestination;
 }
 
 } // namespace ns3

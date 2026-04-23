@@ -7,8 +7,10 @@
 #include "ns3/ptr.h"
 #include "ns3/event-id.h"
 
+#include "ns3/quantum-basis.h"
 #include "ns3/quantum-link-layer-service.h"
 #include "ns3/quantum-channel.h"
+#include "ns3/quantum-signaling-channel.h"
 
 #include <vector>
 #include <string>
@@ -63,6 +65,7 @@ struct PathInfo
     std::string dstNode;
     std::vector<std::string> route;
     double minFidelity;
+    double actualFidelity;
     PathState state;
     uint32_t retryCount;
     std::vector<EntanglementRequestId> entanglementRequestIds;
@@ -72,6 +75,7 @@ struct PathInfo
           srcNode (""),
           dstNode (""),
           minFidelity (0.0),
+          actualFidelity (0.0),
           state (PathState::PENDING),
           retryCount (0)
     {
@@ -87,6 +91,9 @@ struct NeighborInfo
     Ptr<QuantumChannel> channel;
     double linkFidelity;
     double linkSuccessRate;
+    BellPairNoiseFamily noiseFamily;
+    double quantumSetupTimeMs;
+    double classicalControlDelayMs;
     bool isAvailable;
 
     NeighborInfo ()
@@ -94,6 +101,9 @@ struct NeighborInfo
           channel (nullptr),
           linkFidelity (0.0),
           linkSuccessRate (0.0),
+          noiseFamily (BellPairNoiseFamily::WERNER),
+          quantumSetupTimeMs (0.0),
+          classicalControlDelayMs (0.0),
           isAvailable (false)
     {
     }
@@ -213,6 +223,10 @@ public:
      */
     Ptr<ILinkLayerService> GetLinkLayer () const;
 
+    void SetSignalingChannel (Ptr<QuantumSignalingChannel> signalingChannel);
+
+    Ptr<QuantumSignalingChannel> GetSignalingChannel () const;
+
     /**
      * \brief Get the owner name
      * \return Name of the owner node
@@ -236,8 +250,13 @@ public:
      * \param linkFidelity Fidelity of the quantum link
      * \param linkSuccessRate Success probability of the link
      */
-    void AddNeighbor (const std::string &neighbor, Ptr<QuantumChannel> channel,
-                      double linkFidelity, double linkSuccessRate);
+    void AddNeighbor (const std::string &neighbor,
+                      Ptr<QuantumChannel> channel,
+                      double linkFidelity,
+                      double linkSuccessRate,
+                      double quantumSetupTimeMs = DIST_EPR_DELAY * 1000.0,
+                      double classicalControlDelayMs = CLASSICAL_DELAY,
+                      BellPairNoiseFamily noiseFamily = BellPairNoiseFamily::WERNER);
 
     /**
      * \brief Remove a neighbor from the network topology
@@ -334,6 +353,8 @@ protected:
      */
     void PerformEntanglementSwapping (PathId pathId);
 
+    void BeginNextSwap (PathId pathId);
+
     /**
      * \brief Execute swap at a specific intermediate node
      * \param pathId Path identifier
@@ -346,6 +367,8 @@ protected:
      * \param pathId Path identifier
      */
     void FinalizePath (PathId pathId);
+
+    void HandleSwapSignal (SignalingMessageId id, SignalingMessageState state);
 
     /**
      * \brief Handle path setup failure
@@ -367,19 +390,49 @@ protected:
      */
     void NotifyPathResult (PathId pathId, bool success);
 
+    void PublishTopology ();
+
+    void SeedSignalingDelayModel (const std::string &srcNode,
+                                  const std::string &dstNode,
+                                  double delayMs);
+
+    void CleanupPathResources (PathId pathId);
+
+    struct PathSegment
+    {
+        std::string leftNode;
+        std::string rightNode;
+        std::string leftQubit;
+        std::string rightQubit;
+        EntanglementId backingEntanglementId{INVALID_ENTANGLEMENT_ID};
+    };
+
+    struct PendingSwapSignal
+    {
+        PathId pathId{INVALID_PATH_ID};
+        PathSegment leftSegment;
+        PathSegment rightSegment;
+        unsigned leftOutcome{0};
+        unsigned rightOutcome{0};
+    };
+
     // Member variables
     Ptr<QuantumPhyEntity> m_qphyent;                    // Physical entity
     Ptr<QuantumRoutingProtocol> m_routingProtocol;      // Routing protocol
     Ptr<ILinkLayerService> m_linkLayer;                 // Link layer service
+    Ptr<QuantumSignalingChannel> m_signalingChannel;    // Classical signaling plane
     std::string m_owner;                                // Owner node name
 
     // Path management
     std::map<PathId, PathInfo> m_paths;                 // Active paths
     std::map<PathId, PathReadyCallback> m_pathCallbacks; // Path callbacks
     std::map<PathId, EventId> m_pathTimers;             // Path timeout timers
+    std::map<PathId, std::vector<PathSegment>> m_pathSegments;
 
     // Entanglement request tracking
     std::map<EntanglementRequestId, EntanglementRequest> m_entanglementRequests;
+    std::map<EntanglementId, EntanglementRequestId> m_entanglementToRequest;
+    std::map<SignalingMessageId, PendingSwapSignal> m_pendingSwapSignals;
 
     // Neighbor information
     std::map<std::string, NeighborInfo> m_neighbors;
@@ -395,6 +448,9 @@ protected:
 
     // State
     bool m_initialized;
+
+    static std::map<std::string, QuantumNetworkLayer*> s_instances;
+    static std::map<std::string, std::map<std::string, LinkMetrics>> s_topology;
 };
 
 } // namespace ns3

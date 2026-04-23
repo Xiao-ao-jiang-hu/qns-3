@@ -7,6 +7,8 @@ namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE ("QuantumNetworkSimulator");
 
+unsigned long long QuantumNetworkSimulator::s_exatn_name_count = 0;
+
 QuantumNetworkSimulator::QuantumNetworkSimulator (const std::vector<std::string> &owners)
     : m_dm (exatn::TensorNetwork ()),
       m_dm_id (1),
@@ -14,8 +16,6 @@ QuantumNetworkSimulator::QuantumNetworkSimulator (const std::vector<std::string>
       m_qubits_vld (std::vector<std::string> ()),
       m_qubit2tensor (std::map<std::string, std::pair<unsigned, unsigned>> ()),
       m_qubit2tensor_dag (std::map<std::string, std::pair<unsigned, unsigned>> ()),
-
-      m_exatn_name_count (0),
       m_exatn_tensors (std::vector<std::string> ())
 {
   /* circuit */
@@ -108,11 +108,21 @@ QuantumNetworkSimulator::PrepareGate (const std::string &name,
   NS_LOG_LOGIC ("Preparing a gate named \"" << name << "\"");
   m_exatn_tensors.push_back (name);
 
+  if (exatn::tensorAllocated (name))
+    {
+      NS_LOG_LOGIC ("Reusing an existing ExaTN gate tensor named \"" << name << "\"");
+      return;
+    }
+
   std::vector<size_t> extents = {};
   for (size_t i = 0; i < (Log2 (sqrt (data.size ())) << 1); ++i)
     extents.push_back (2);
 
-  assert (exatn::createTensor (name, exatn::TensorElementType::COMPLEX64, extents));
+  if (!exatn::createTensor (name, exatn::TensorElementType::COMPLEX64, extents))
+    {
+      NS_LOG_LOGIC ("Reusing an existing ExaTN gate tensor named \"" << name << "\"");
+      return;
+    }
   assert (exatn::initTensorData (name, data));
 }
 
@@ -151,7 +161,17 @@ QuantumNetworkSimulator::PrepareTensor (const std::string &name,
     }
   m_exatn_tensors.push_back (name);
 
-  assert (exatn::createTensor (name, exatn::TensorElementType::COMPLEX64, extents));
+  if (exatn::tensorAllocated (name))
+    {
+      NS_LOG_LOGIC ("Reusing an existing ExaTN tensor named \"" << name << "\"");
+      return;
+    }
+
+  if (!exatn::createTensor (name, exatn::TensorElementType::COMPLEX64, extents))
+    {
+      NS_LOG_LOGIC ("Reusing an existing ExaTN tensor named \"" << name << "\"");
+      return;
+    }
   assert (exatn::initTensorData (name, data));
 }
 
@@ -1171,7 +1191,7 @@ QuantumNetworkSimulator::CheckValid (const std::vector<std::string> &qubits) con
 std::string
 QuantumNetworkSimulator::AllocExatnName ()
 {
-  return QNS_EXATN_PREFIX + std::to_string (m_exatn_name_count++);
+  return QNS_EXATN_PREFIX + std::to_string (s_exatn_name_count++);
 }
 
 
