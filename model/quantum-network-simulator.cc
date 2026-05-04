@@ -8,6 +8,43 @@ namespace ns3 {
 NS_LOG_COMPONENT_DEFINE ("QuantumNetworkSimulator");
 
 unsigned long long QuantumNetworkSimulator::s_exatn_name_count = 0;
+bool QuantumNetworkSimulator::s_exatn_initialized = false;
+unsigned long long QuantumNetworkSimulator::s_exatn_live_simulators = 0;
+
+void
+QuantumNetworkSimulator::EnsureExatnInitialized ()
+{
+  if (!s_exatn_initialized)
+    {
+      if (!exatn::isInitialized ())
+        {
+          exatn::initialize ();
+        }
+      s_exatn_initialized = true;
+    }
+}
+
+void
+QuantumNetworkSimulator::AcquireExatnSession ()
+{
+  EnsureExatnInitialized ();
+  ++s_exatn_live_simulators;
+}
+
+void
+QuantumNetworkSimulator::ReleaseExatnSession ()
+{
+  if (s_exatn_live_simulators == 0)
+    {
+      return;
+    }
+
+  --s_exatn_live_simulators;
+  if (s_exatn_live_simulators == 0 && exatn::isInitialized ())
+    {
+      exatn::destroyTensorsSync ();
+    }
+}
 
 QuantumNetworkSimulator::QuantumNetworkSimulator (const std::vector<std::string> &owners)
     : m_dm (exatn::TensorNetwork ()),
@@ -20,13 +57,13 @@ QuantumNetworkSimulator::QuantumNetworkSimulator (const std::vector<std::string>
 {
   /* circuit */
 
-  exatn::initialize ();
-
+  AcquireExatnSession ();
   m_dm.rename (AllocExatnName ());
 }
 
 QuantumNetworkSimulator::QuantumNetworkSimulator (const QuantumNetworkSimulator &other)
 {
+  AcquireExatnSession ();
   m_dm = other.m_dm;
   m_dm.rename (AllocExatnName ());
 
@@ -39,7 +76,7 @@ QuantumNetworkSimulator::QuantumNetworkSimulator (const QuantumNetworkSimulator 
 
 QuantumNetworkSimulator::~QuantumNetworkSimulator ()
 {
-  exatn::finalize ();
+  ReleaseExatnSession ();
 }
 
 QuantumNetworkSimulator::QuantumNetworkSimulator ()
@@ -48,8 +85,11 @@ QuantumNetworkSimulator::QuantumNetworkSimulator ()
       m_qubits_all (std::vector<std::string> ()),
       m_qubits_vld (std::vector<std::string> ()),
       m_qubit2tensor (std::map<std::string, std::pair<unsigned, unsigned>> ()),
-      m_qubit2tensor_dag (std::map<std::string, std::pair<unsigned, unsigned>> ())
+      m_qubit2tensor_dag (std::map<std::string, std::pair<unsigned, unsigned>> ()),
+      m_exatn_tensors (std::vector<std::string> ())
 {
+  AcquireExatnSession ();
+  m_dm.rename (AllocExatnName ());
 }
 
 TypeId

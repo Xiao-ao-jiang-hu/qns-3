@@ -47,6 +47,16 @@ private:
   /** Global counter to keep ExaTN tensor names unique across simulator instances. */
   static unsigned long long s_exatn_name_count;
 
+  /** Process-wide ExaTN initialization latch. */
+  static bool s_exatn_initialized;
+
+  /** Number of live QuantumNetworkSimulator instances in this process. */
+  static unsigned long long s_exatn_live_simulators;
+
+  static void EnsureExatnInitialized ();
+  static void AcquireExatnSession ();
+  static void ReleaseExatnSession ();
+
 public:
   QuantumNetworkSimulator (const std::vector<std::string> &owners);
 

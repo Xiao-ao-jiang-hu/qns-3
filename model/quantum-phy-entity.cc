@@ -55,6 +55,23 @@ QuantumPhyEntity::QuantumPhyEntity ()
 void
 QuantumPhyEntity::DoDispose (void)
 {
+  for (auto& [owner, pnode] : m_owner2pnode)
+    {
+      if (pnode != nullptr)
+        {
+          pnode->GetQuantumMemory ()->SetPhyEntity (nullptr);
+          pnode->Dispose ();
+        }
+    }
+
+  m_owner2pnode.clear ();
+  m_conn2apps.clear ();
+  m_qubit2time.clear ();
+  m_node2model.clear ();
+  m_qubit2model.clear ();
+  m_gate2model.clear ();
+  m_conn2model.clear ();
+
   Object::DoDispose ();
 }
 

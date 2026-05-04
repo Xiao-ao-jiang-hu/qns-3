@@ -39,6 +39,8 @@ QuantumNode::QuantumNode ()
 void
 QuantumNode::DoDispose (void)
 {
+  m_qmemory.SetPhyEntity (nullptr);
+  m_qphyent = nullptr;
   Node::DoDispose ();
 }
 

@@ -10,6 +10,8 @@
  *   - A->B has two candidate prefixes:
  *       1. Direct link: fidelity 0.98, setup 60 ms
  *       2. Two-hop path A->X1->B: each link fidelity 0.97, setup 50 ms
+ *   - This example also includes a slower/stronger comparison branch
+ *       A->X2->B: each link fidelity 0.995, setup 70 ms
  *   - B->C has one three-hop suffix:
  *       B->Y1->Y2->C: each link fidelity 0.99, setup 50 ms
  *   - All node coherence times: 100 ms
@@ -25,6 +27,7 @@
  * Usage:
  *   ./ns3 run dijkstra-vs-sliced-dijkstra
  *   ./ns3 run 'dijkstra-vs-sliced-dijkstra --coherenceMs=100 --bucketWidthMs=10 --k=4'
+ *   ./ns3 run 'dijkstra-vs-sliced-dijkstra --swapSignalDelayMs=1'
  */
 
 #include "ns3/boolean.h"
@@ -33,6 +36,7 @@
 #include "ns3/double.h"
 #include "ns3/quantum-basis.h"
 #include "ns3/quantum-network-layer.h"
+#include "ns3/quantum-node.h"
 #include "ns3/quantum-phy-entity.h"
 #include "ns3/quantum-routing-metric.h"
 #include "ns3/sliced-dijkstra-routing-protocol.h"
@@ -43,6 +47,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -165,10 +170,89 @@ BuildLabelForRoute(Ptr<QuantumRoutingMetric> metric,
     return true;
 }
 
+struct SwapChainState
+{
+    Ptr<QuantumPhyEntity> qphyent;
+    std::vector<std::string> route;
+    std::vector<std::string> leftQubits;
+    std::vector<std::string> rightQubits;
+    std::string leftEndpoint;
+    double swapSignalDelayMs;
+    double* measuredFidelity;
+};
+
+void
+ExecuteSwapStep(const std::shared_ptr<SwapChainState>& state,
+                uint32_t segIndex,
+                const std::string& carriedRightEndpoint)
+{
+    const std::string owner = state->route.at(segIndex);
+    const std::string rightOwner = state->route.at(segIndex + 1);
+    const std::string localRightSegmentQubit = state->leftQubits.at(segIndex);
+    const std::string farRightQubit = state->rightQubits.at(segIndex);
+
+    state->qphyent->ApplyGate(owner,
+                              QNS_GATE_PREFIX + "CNOT",
+                              std::vector<std::complex<double>>{},
+                              {localRightSegmentQubit, carriedRightEndpoint});
+    state->qphyent->ApplyGate(owner,
+                              QNS_GATE_PREFIX + "H",
+                              std::vector<std::complex<double>>{},
+                              {carriedRightEndpoint});
+
+    auto outcomeLeft = state->qphyent->Measure(owner, {carriedRightEndpoint});
+    auto outcomeRight = state->qphyent->Measure(owner, {localRightSegmentQubit});
+    state->qphyent->PartialTrace({carriedRightEndpoint, localRightSegmentQubit});
+
+    // PartialTrace invalidates these measured qubits in the tensor state, but the
+    // current memory bookkeeping keeps their names until they are removed explicitly.
+    // Without this cleanup, later EnsureAllDecoherence() calls may try to decohere
+    // already-traced qubits once simulated time advances between swap stages.
+    state->qphyent->GetNode(owner)->RemoveQubit(carriedRightEndpoint);
+    state->qphyent->GetNode(owner)->RemoveQubit(localRightSegmentQubit);
+
+    auto continueAfterSignal = [state, rightOwner, farRightQubit, segIndex, outcomeLeft, outcomeRight]() {
+        if (outcomeRight.first == 1)
+        {
+            state->qphyent->ApplyGate(rightOwner,
+                                      QNS_GATE_PREFIX + "PX",
+                                      std::vector<std::complex<double>>{},
+                                      {farRightQubit});
+        }
+        if (outcomeLeft.first == 1)
+        {
+            state->qphyent->ApplyGate(rightOwner,
+                                      QNS_GATE_PREFIX + "PZ",
+                                      std::vector<std::complex<double>>{},
+                                      {farRightQubit});
+        }
+
+        if (segIndex + 1 < state->leftQubits.size())
+        {
+            ExecuteSwapStep(state, segIndex + 1, farRightQubit);
+        }
+        else
+        {
+            state->qphyent->CalculateFidelity({state->leftEndpoint, farRightQubit},
+                                              *state->measuredFidelity);
+        }
+    };
+
+    if (state->swapSignalDelayMs > 0.0)
+    {
+        Simulator::Schedule(MilliSeconds(state->swapSignalDelayMs), continueAfterSignal);
+    }
+    else
+    {
+        continueAfterSignal();
+    }
+}
+
 double
 SimulateRouteActualFidelity(const std::vector<std::string>& route,
                             const Topology& topology,
-                            double coherenceMs)
+                            double coherenceMs,
+                            double swapSignalDelayMs)
 {
     if (route.size() < 2)
     {
@@ -219,52 +303,32 @@ SimulateRouteActualFidelity(const std::vector<std::string>& route,
     }
 
     double measuredFidelity = 0.0;
-    Simulator::Schedule(
-        MilliSeconds(tMaxMs),
-        [qphyent, route, leftQubits, rightQubits, &measuredFidelity]() {
-            std::string leftEndpoint = leftQubits.front();
-            std::string carriedRightEndpoint = rightQubits.front();
+    const std::string leftEndpoint = leftQubits.front();
 
-            for (uint32_t segIndex = 1; segIndex < leftQubits.size(); ++segIndex)
-            {
-                const std::string& owner = route[segIndex];
-                const std::string& rightOwner = route[segIndex + 1];
-                const std::string& localRightSegmentQubit = leftQubits[segIndex];
-                const std::string& farRightQubit = rightQubits[segIndex];
+    if (leftQubits.size() == 1)
+    {
+        Simulator::Schedule(MilliSeconds(tMaxMs),
+                            [qphyent, leftEndpoint, rightEndpoint = rightQubits.front(), &measuredFidelity]() {
+                                qphyent->CalculateFidelity({leftEndpoint, rightEndpoint},
+                                                           measuredFidelity);
+                            });
+    }
+    else
+    {
+        auto state = std::make_shared<SwapChainState>();
+        state->qphyent = qphyent;
+        state->route = route;
+        state->leftQubits = leftQubits;
+        state->rightQubits = rightQubits;
+        state->leftEndpoint = leftEndpoint;
+        state->swapSignalDelayMs = swapSignalDelayMs;
+        state->measuredFidelity = &measuredFidelity;
 
-                qphyent->ApplyGate(owner,
-                                   QNS_GATE_PREFIX + "CNOT",
-                                   std::vector<std::complex<double>>{},
-                                   {localRightSegmentQubit, carriedRightEndpoint});
-                qphyent->ApplyGate(owner,
-                                   QNS_GATE_PREFIX + "H",
-                                   std::vector<std::complex<double>>{},
-                                   {carriedRightEndpoint});
-
-                auto outcomeLeft = qphyent->Measure(owner, {carriedRightEndpoint});
-                auto outcomeRight = qphyent->Measure(owner, {localRightSegmentQubit});
-
-                if (outcomeRight.first == 1)
-                {
-                    qphyent->ApplyGate(rightOwner,
-                                       QNS_GATE_PREFIX + "PX",
-                                       std::vector<std::complex<double>>{},
-                                       {farRightQubit});
-                }
-                if (outcomeLeft.first == 1)
-                {
-                    qphyent->ApplyGate(rightOwner,
-                                       QNS_GATE_PREFIX + "PZ",
-                                       std::vector<std::complex<double>>{},
-                                       {farRightQubit});
-                }
-
-                qphyent->PartialTrace({carriedRightEndpoint, localRightSegmentQubit});
-                carriedRightEndpoint = farRightQubit;
-            }
-
-            qphyent->CalculateFidelity({leftEndpoint, carriedRightEndpoint}, measuredFidelity);
-        });
+        Simulator::Schedule(MilliSeconds(tMaxMs),
+                            [state, firstRightQubit = rightQubits.front()]() {
+                                ExecuteSwapStep(state, 1, firstRightQubit);
+                            });
+    }
 
     Simulator::Run();
 
@@ -280,6 +344,10 @@ PrintTopologyDiagram(double coherenceMs)
     std::cout << "\n";
     std::cout << "  A ==[F0=0.98, Tgen=60 ms]== B ==[F0=0.99, Tgen=50 ms]== Y1"
               << " ==[F0=0.99, Tgen=50 ms]== Y2 ==[F0=0.99, Tgen=50 ms]== C\n";
+    std::cout << "  |\\                           \n";
+    std::cout << "  | [F0=0.995, Tgen=70 ms]     \n";
+    std::cout << "  |  \\                         \n";
+    std::cout << "  |   X2 ==[F0=0.995, Tgen=70 ms]== B\n";
     std::cout << "  |                            \n";
     std::cout << "  [F0=0.97, Tgen=50 ms]        \n";
     std::cout << "  |                            \n";
@@ -288,6 +356,7 @@ PrintTopologyDiagram(double coherenceMs)
     std::cout << "Candidate A->C routes:\n";
     std::cout << "  1. A -> B -> Y1 -> Y2 -> C\n";
     std::cout << "  2. A -> X1 -> B -> Y1 -> Y2 -> C\n";
+    std::cout << "  3. A -> X2 -> B -> Y1 -> Y2 -> C\n";
     std::cout << std::endl;
 }
 
@@ -297,7 +366,8 @@ PrintRouteAnalysis(const std::string& name,
                    QuantumNetworkLayer* networkLayer,
                    const Topology& topology,
                    const std::vector<std::string>& route,
-                   double actualFidelity)
+                   double actualFidelity,
+                   double swapSignalDelayMs)
 {
     QuantumRoutingLabel label;
     const bool ok = BuildLabelForRoute(metric, networkLayer, topology, route, label);
@@ -315,7 +385,8 @@ PrintRouteAnalysis(const std::string& name,
     std::cout << "  predicted fidelity: " << metric->GetScore(label) << "\n";
     std::cout << "  t_max_ms:           " << GetScalar(label, "t_max_ms") << "\n";
     std::cout << "  hop_count:          " << GetScalar(label, "hop_count") << "\n";
-    std::cout << "  actual fidelity:    " << actualFidelity << "\n";
+    std::cout << "  actual fidelity:    " << actualFidelity
+              << " (with swapSignalDelayMs=" << swapSignalDelayMs << ")\n";
 }
 
 void
@@ -373,12 +444,17 @@ int
 main(int argc, char* argv[])
 {
     double coherenceMs = 100.0;
+    double swapSignalDelayMs = 1.0;
     uint32_t k = 4;
     double bucketWidthMs = 10.0;
     bool useBuckets = true;
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("coherenceMs", "Coherence time for every node in milliseconds.", coherenceMs);
+    cmd.AddValue("swapSignalDelayMs",
+                 "Classical signaling delay in milliseconds between consecutive swap stages in the"
+                 " final physical validation only.",
+                 swapSignalDelayMs);
     cmd.AddValue("k", "Maximum number of labels retained per node.", k);
     cmd.AddValue("bucketWidthMs", "Tmax bucket width for Sliced Dijkstra.", bucketWidthMs);
     cmd.AddValue("useBuckets", "Enable Tmax bucket slicing.", useBuckets);
@@ -425,12 +501,15 @@ main(int argc, char* argv[])
     sliced->UpdateTopology(topology);
 
     const std::vector<std::string> directRoute = {"A", "B", "Y1", "Y2", "C"};
-    const std::vector<std::string> twoHopRoute = {"A", "X1", "B", "Y1", "Y2", "C"};
+    const std::vector<std::string> fastRoute = {"A", "X1", "B", "Y1", "Y2", "C"};
+    const std::vector<std::string> slowStrongRoute = {"A", "X2", "B", "Y1", "Y2", "C"};
 
     QuantumRoutingLabel directPrefix;
-    QuantumRoutingLabel twoHopPrefix;
+    QuantumRoutingLabel fastPrefix;
+    QuantumRoutingLabel slowStrongPrefix;
     BuildLabelForRoute(metric, PeekPointer(netLayer), topology, {"A", "B"}, directPrefix);
-    BuildLabelForRoute(metric, PeekPointer(netLayer), topology, {"A", "X1", "B"}, twoHopPrefix);
+    BuildLabelForRoute(metric, PeekPointer(netLayer), topology, {"A", "X1", "B"}, fastPrefix);
+    BuildLabelForRoute(metric, PeekPointer(netLayer), topology, {"A", "X2", "B"}, slowStrongPrefix);
 
     std::cout << std::fixed << std::setprecision(6);
     std::cout << "Prefix comparison at B:\n";
@@ -438,12 +517,19 @@ main(int argc, char* argv[])
               << " | predicted_fidelity=" << metric->GetScore(directPrefix)
               << " | t_max_ms=" << GetScalar(directPrefix, "t_max_ms") << "\n";
     std::cout << "  A -> X1 -> B"
-              << " | predicted_fidelity=" << metric->GetScore(twoHopPrefix)
-              << " | t_max_ms=" << GetScalar(twoHopPrefix, "t_max_ms") << "\n";
+              << " | predicted_fidelity=" << metric->GetScore(fastPrefix)
+              << " | t_max_ms=" << GetScalar(fastPrefix, "t_max_ms") << "\n";
+    std::cout << "  A -> X2 -> B"
+              << " | predicted_fidelity=" << metric->GetScore(slowStrongPrefix)
+              << " | t_max_ms=" << GetScalar(slowStrongPrefix, "t_max_ms") << "\n";
     std::cout << "\n";
 
-    const double directActual = SimulateRouteActualFidelity(directRoute, topology, coherenceMs);
-    const double twoHopActual = SimulateRouteActualFidelity(twoHopRoute, topology, coherenceMs);
+    const double directActual =
+        SimulateRouteActualFidelity(directRoute, topology, coherenceMs, swapSignalDelayMs);
+    const double fastActual =
+        SimulateRouteActualFidelity(fastRoute, topology, coherenceMs, swapSignalDelayMs);
+    const double slowStrongActual =
+        SimulateRouteActualFidelity(slowStrongRoute, topology, coherenceMs, swapSignalDelayMs);
 
     std::cout << "Candidate route analysis:\n";
     PrintRouteAnalysis("Route 1: direct A-B prefix",
@@ -451,14 +537,24 @@ main(int argc, char* argv[])
                        PeekPointer(netLayer),
                        topology,
                        directRoute,
-                       directActual);
+                       directActual,
+                       swapSignalDelayMs);
     std::cout << "\n";
-    PrintRouteAnalysis("Route 2: two-hop A-X1-B prefix",
+    PrintRouteAnalysis("Route 2: fast A-X1-B prefix",
                        metric,
                        PeekPointer(netLayer),
                        topology,
-                       twoHopRoute,
-                       twoHopActual);
+                       fastRoute,
+                       fastActual,
+                       swapSignalDelayMs);
+    std::cout << "\n";
+    PrintRouteAnalysis("Route 3: slow-strong A-X2-B prefix",
+                       metric,
+                       PeekPointer(netLayer),
+                       topology,
+                       slowStrongRoute,
+                       slowStrongActual,
+                       swapSignalDelayMs);
     std::cout << "\n";
 
     std::vector<std::string> dijkstraRoute = dijkstra->CalculateRoute("A", "C");
@@ -471,31 +567,31 @@ main(int argc, char* argv[])
     std::cout << "  Sliced metric:         " << sliced->GetRouteMetric("A", "C") << "\n";
     std::cout << "\n";
 
-    const bool dijkstraPicksDirect = dijkstraRoute == directRoute;
-    const bool slicedPicksTwoHop = slicedRoute == twoHopRoute;
+    const bool dijkstraPicksSlowStrong = dijkstraRoute == slowStrongRoute;
+    const bool slicedPicksFast = slicedRoute == fastRoute;
 
     std::cout << "Summary:\n";
-    if (dijkstraPicksDirect)
+    if (dijkstraPicksSlowStrong)
     {
-        std::cout << "  Single-label Dijkstra keeps the stronger local A->B prefix and chooses the"
-                  << " direct-prefix route.\n";
+        std::cout << "  Single-label Dijkstra keeps the locally strongest prefix and chooses the"
+                  << " slower/stronger X2 branch.\n";
     }
     else
     {
-        std::cout << "  Single-label Dijkstra did not choose the expected direct-prefix route.\n";
+        std::cout << "  Single-label Dijkstra did not choose the expected slow-strong X2 route.\n";
     }
 
-    if (slicedPicksTwoHop)
+    if (slicedPicksFast)
     {
         std::cout << "  Sliced Dijkstra keeps multiple Tmax slices at B and recovers the better"
-                  << " two-hop-prefix route.\n";
+                  << " fast X1 route.\n";
     }
     else
     {
-        std::cout << "  Sliced Dijkstra did not choose the expected two-hop-prefix route.\n";
+        std::cout << "  Sliced Dijkstra did not choose the expected fast X1 route.\n";
     }
 
-    if (dijkstraPicksDirect && slicedPicksTwoHop)
+    if (dijkstraPicksSlowStrong && slicedPicksFast)
     {
         std::cout << "  The requested prefix-trap comparison is reproduced successfully.\n";
     }
