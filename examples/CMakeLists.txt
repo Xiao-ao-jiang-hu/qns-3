@@ -125,6 +125,12 @@ build_lib_example(
     SOURCE_FILES dijkstra-vs-sliced-random.cc
     LIBRARIES_TO_LINK ${libquantum}
 )
+
+build_lib_example(
+    NAME dijkstra-vs-sliced-topology-zoo
+    SOURCE_FILES dijkstra-vs-sliced-topology-zoo.cc
+    LIBRARIES_TO_LINK ${libquantum}
+)
 build_lib_example(
     NAME routing-mismatch-example
     SOURCE_FILES routing-mismatch-example.cc

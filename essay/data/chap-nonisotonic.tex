@@ -6,233 +6,271 @@
 \chapter{量子路由度量的非保序性分析}
 \label{chap:nonisotonic}
 
-本章在第~\ref{chap:phymodel}章物理模型的基础上，推导路径拼接的保真度公式，严格分析Q-CAST等现有路由度量的非保序性（non-isotonicity）缺陷，给出保序比的理论下界，并构造系统性复现此缺陷的最坏情况拓扑。最后通过卫星量子网络的实际场景说明非保序性问题的现实危害。
+本章在第~\ref{chap:phymodel}章路径级物理模型的基础上，分析当前 qns-3 路由度量为什么不是保序的，并说明单标签 \texttt{DijkstraRoutingProtocol} 为什么会在这种度量下过早剪枝。随后给出 \texttt{SlicedDijkstraRoutingProtocol} 的多标签切片语义，解释它如何通过保留不同 $T_{\max}$ 前缀来缓解排序反转。实验部分暂不报告最终数值，只保留后续验证所需的设计占位。
 
-\section{路径拼接模型与路由度量}
-\label{sec:path-model}
+\section{路径标签与当前路由度量}
+\label{sec:current-metric}
 
-\subsection{路径拼接的Bell对角递推公式}
+当前实现中的路径不是一个单一标量，而是一条完整的 label。对路径
 
-在多跳量子网络路由中，一条端到端路径通常由若干子路径拼接而成。对qns-3当前的混态物理模型而言，路径状态的正确闭包对象不是单个标量保真度$F$，而是Bell对角权重向量
-\begin{equation}
-  w(P) = \bigl(a_P, b_P, c_P, d_P\bigr),
-  \qquad
-  F(P) = a_P.
-\end{equation}
-设路径$p$的端节点为$v_s$和$v_m$，路径$c$的端节点为$v_m$和$v_d$。若某一段路径更早ready，则需先对其施加等待诱导的Bell对角退相干算子$\mathcal{M}_\Lambda$；记处理后的两段状态分别为$\widetilde{w}(p)$和$\widetilde{w}(c)$，则拼接路径$p \oplus c$的端到端状态满足
-\begin{equation}
-  w(p \oplus c) = \mathcal{S}\!\bigl(\widetilde{w}(p), \widetilde{w}(c)\bigr),
-  \label{eq:path-concat}
-\end{equation}
-其中$\mathcal{S}$为Bell对角态在理想纠缠交换下的卷积算子：
-\begin{align}
-  a_{p \oplus c} &= \tilde{a}_p \tilde{a}_c + \tilde{b}_p \tilde{b}_c
-                 + \tilde{c}_p \tilde{c}_c + \tilde{d}_p \tilde{d}_c, \notag\\
-  b_{p \oplus c} &= \tilde{a}_p \tilde{b}_c + \tilde{b}_p \tilde{a}_c
-                 + \tilde{c}_p \tilde{d}_c + \tilde{d}_p \tilde{c}_c, \notag\\
-  c_{p \oplus c} &= \tilde{a}_p \tilde{c}_c + \tilde{c}_p \tilde{a}_c
-                 + \tilde{b}_p \tilde{d}_c + \tilde{d}_p \tilde{b}_c, \notag\\
-  d_{p \oplus c} &= \tilde{a}_p \tilde{d}_c + \tilde{d}_p \tilde{a}_c
-                 + \tilde{b}_p \tilde{c}_c + \tilde{c}_p \tilde{b}_c. \label{eq:path-concat-expanded}
-\end{align}
-因此，端到端保真度等于$w(p \oplus c)$的第一个分量，而不是简单的$F(p)F(c)$。特别地，在\emph{无额外等待}且两段输入均为Werner态的特例下，
-\begin{equation}
-  F(p \oplus c)
-  = F(p)F(c) + \frac{(1 - F(p))(1 - F(c))}{3},
-  \label{eq:path-concat-werner}
-\end{equation}
-这才是当前模拟器物理层与理想纠缠交换所对应的正确闭式。
+\[
+p = (v_0, v_1, \ldots, v_h),
+\]
 
-\subsection{Q-CAST路由度量}
+其标签中显式保存了每一段链路的原始参数：
 
-Q-CAST协议以期望吞吐量$E_t$作为路径度量（详见第~\ref{sec:qcast-protocol}节）：
-\begin{equation}
-  E_t(P) = \Bigl(\prod_{e \in P} p_e\Bigr) \cdot S(|P|)
-  \label{eq:qcast-et}
-\end{equation}
-其中$p_e$为链路$e$的纠缠生成成功概率，$S(|P|)$为随跳数递减的惩罚因子。$E_t$综合考虑了链路成功率和路径长度，但\textbf{完全忽略了经典信令时延$\delta_i$和节点相干时间$\tau_k$对保真度的影响}。这一简化在链路参数均匀的网络中是合理的近似，但在异质网络（如存在高延迟卫星链路或劣质量子存储器的混合网络）中将导致严重的路由错误。
+\begin{itemize}
+  \item \texttt{initialFidelity}，表示该段链路的初始 Bell 态保真度；
+  \item \texttt{noiseFamily}，表示该段链路的噪声族；
+  \item \texttt{setupTimeMs}，表示该段链路的就绪时间；
+  \item 左右端节点的相干时间 $\tau$。
+\end{itemize}
 
-\section{路由非保序性的理论分析}
+这些段信息会在扩展时被重新扫描，并共同决定当前 label 的两个核心量：
+
+\[
+T_{\max}(p) = \max_j T_j,
+\qquad
+F_{\mathrm{pred}}(p) = \texttt{predicted\_fidelity}(p).
+\]
+
+其中 $T_j$ 是第 $j$ 段链路的 \texttt{setupTimeMs}。当前 metric 的计算不是“在旧分数上加一项”，而是对整条前缀重新执行：
+
+\begin{enumerate}
+  \item 计算整条路径的 $T_{\max}$；
+  \item 令更快的链路等待 $T_{\max} - T_j$；
+  \item 对等待后的 Bell 对角态递归做纠缠交换；
+  \item 从最终 Bell 对角态的第一个分量读取 \texttt{predicted\_fidelity}。
+\end{enumerate}
+
+因此，当前 metric 本质上是一个“前缀重算”的路径质量函数，而不是一个可加的边权和。
+
+\section{度量的非保序性}
 \label{sec:non-isotonicity}
 
-\subsection{保序性条件}
+\subsection{保序性的定义}
 
-路由代数中，若度量$w$满足\emph{保序性}（isotonicity），则对任意路径$a, b, c$，
-\begin{equation}
-  w(a) \geq w(b) \implies w(a \oplus c) \geq w(b \oplus c)
-  \label{eq:isotonicity}
-\end{equation}
-即局部最优路径拼接后仍为全局最优。对于以保真度为优化目标的量子路由而言，若保序性成立，则可使用标准Dijkstra算法逐跳贪心选择，保证全局最优性。
-
-然而，Q-CAST的$E_t$度量\textbf{不满足保序性}。本节通过构造最坏情况场景，给出surrogate保序比$\widehat{\eta} = \widehat{F}(a \oplus c)/\widehat{F}(b \oplus c)$的下确界为零，定量刻画这一缺陷的严重程度。
-
-\subsection{保序比的 surrogate 表达式}
-
-严格物理模型下，式~\eqref{eq:path-concat}是Bell对角向量递推，难以压缩为单个标量保真度的乘法闭式。若为了做最坏情况拓扑的直观估算，再进一步采用一阶标量化近似
-\begin{equation}
-  \widehat{F}(p \oplus c)
-  = \widehat{F}(p)\widehat{F}(c)
-    \exp\!\left(-T_p \cdot \frac{1}{\tau_m} - (T_p + \delta_m) \cdot S_c\right),
-  \label{eq:path-concat-surrogate}
-\end{equation}
-其中$T_p = \sum_{i \in p}\delta_i$，$S_c = \sum_{k \in c} 1/\tau_k$，则对两条到达同一枢轴节点$v_m$的路径$a$和$b$可得到如下surrogate比值：
+若一个路径度量 $F$ 满足
 
 \begin{equation}
-  \widehat{\eta} \triangleq \frac{\widehat{F}(a \oplus c)}{\widehat{F}(b \oplus c)}
-  = \frac{\widehat{F}(a)}{\widehat{F}(b)} \cdot \exp\!\Bigl(-(T_a - T_b) \cdot D_c\Bigr)
-  \label{eq:eta}
+  F(a) \ge F(b) \implies F(a \oplus c) \ge F(b \oplus c)
+  \label{eq:isotonicity-def}
 \end{equation}
 
-其中$D_c \triangleq 1/\tau_m + S_c \geq 0$为后续路径$c$对经典时延的总敏感度（decay factor），包含枢轴节点和路径$c$上所有节点的退相干贡献。公因子$\widehat{F}(c)$和$e^{-\delta_m S_c}$在分子分母中相消，不影响$\widehat{\eta}$。下面的最坏情况分析应理解为对这一surrogate模型的解释；其物理根源仍来自式~\eqref{eq:path-concat}所描述的Bell对角等待-交换递推。
+则称它在路径拼接下是保序的。这个性质对经典最短路径算法非常关键，因为它保证了局部最优前缀拼接后仍然不劣于局部次优前缀。
 
-\subsection{下确界的推导}
+当前实现中的 \texttt{predicted\_fidelity} 不满足这一性质。原因不是某一条边的局部打分出了错，而是 $T_{\max}$ 会在拼接后重新决定所有已建链路的等待时间，使得一个“当前更好”的前缀在接入共同后缀后，反而更快被退相干拖垮。
+
+\subsection{一个构造性反例}
+
+为了避免把复杂递推写成一个不存在的闭式，我们直接使用当前代码中已经实现的两步演化来构造反例。
+
+先考虑一条单段 Werner 路径。若其初始保真度为 $F$，左右两端的相干时间都取 $\tau$，并且该段在交换前需要等待 $\Delta$，则其等待后的 \textit{$\Phi^+$} 权重为
 
 \begin{equation}
-  \inf \widehat{\eta} = 0
-  \label{eq:inf-eta}
+  g(F,\Delta;\tau)
+  =
+  \frac{2F + 1 + e^{-2\Delta/\tau}(4F - 1)}{6}.
+  \label{eq:waited-werner-fidelity}
 \end{equation}
 
-\textbf{证明：}在约束$\widehat{F}(a) \geq \widehat{F}(b)$（即路径$a$在该surrogate模型下不劣于路径$b$）的前提下，构造如下极端参数场景：
+这正是 \texttt{ApplyPhaseFlipMemoryWait} 在 Werner 输入、对称相干时间和对称等待时间下的特例。可以直接看出，式~\eqref{eq:waited-werner-fidelity} 随 $F$ 单调递增，随 $\Delta$ 单调递减。
+
+再考虑一个固定后缀 $x$。若后缀在交换时的 Bell 保真度为 $F_x>1/4$，则 Werner 交换公式
+
+\begin{equation}
+  S(F_1,F_2)
+  =
+  F_1F_2 + \frac{(1-F_1)(1-F_2)}{3}
+  \label{eq:werner-swap}
+\end{equation}
+
+关于每一个自变量都是单调递增的，因为
+
+\[
+  \frac{\partial S}{\partial F_1}
+  =
+  \frac{4F_2 - 1}{3},
+  \qquad
+  \frac{\partial S}{\partial F_2}
+  =
+  \frac{4F_1 - 1}{3},
+\]
+
+在本节关注的物理区间 $F_1,F_2>1/2$ 内，这两个偏导都为正。
+
+于是，只要存在两个前缀 $a,b$，使得
+
+\[
+F_{\mathrm{pred}}(a) > F_{\mathrm{pred}}(b),
+\qquad
+T_{\max}(a) > T_{\max}(b),
+\]
+
+并且在接入同一快速后缀 $x$ 后，$x$ 在 $a \oplus x$ 中需要比在 $b \oplus x$ 中等待更长时间，那么就可能出现
+
+\[
+S\!\bigl(F_{\mathrm{pred}}(a), g(F_x,\Delta_x^{(a)};\tau)\bigr)
+<
+S\!\bigl(F_{\mathrm{pred}}(b), g(F_x,\Delta_x^{(b)};\tau)\bigr),
+\]
+
+其中 $\Delta_x^{(a)}>\Delta_x^{(b)}$。于是由式~\eqref{eq:werner-swap} 推出
+
+\[
+F_{\mathrm{pred}}(a \oplus x)
+<
+F_{\mathrm{pred}}(b \oplus x).
+\]
+
+下面的数值例子给出一组满足该不等式的参数，从而完成构造性证明。
+
+\subsection{一个具体数值例子}
+
+为了把上述构造说得更直观，可以取如下参数：
 
 \begin{itemize}
-  \item \textbf{路径$a$（高延迟-高质量内存）：}路径$a$由高延迟链路（$\delta_i^{(a)} \sim O(\text{百ms})$）和相干时间极长的节点（$\tau_k^{(a)} \to \infty$）构成，使得其自身保真度$F(a) \approx F_0$几乎无衰减，但累积时延$T_a \to \infty$；
-  \item \textbf{路径$b$（低延迟-普通内存）：}路径$b$为极短直连链路，$T_b \to 0$，$F(b) \approx F_0$；
-  \item \textbf{路径$c$（高敏感度后续路径）：}枢轴节点$v_m$或路径$c$上包含相干时间极短的节点，$\tau_m \to 0$ 或 $S_c \to \infty$，使得$D_c \to \infty$。
+  \item 前缀 $a$：单段路径，初始保真度 $F_a=0.55$，就绪时间 $t_a=5$ ms；
+  \item 前缀 $b$：单段路径，初始保真度 $F_b=0.50$，就绪时间 $t_b=0$ ms；
+  \item 共享后缀 $x$：单段路径，初始保真度 $F_x=0.90$，就绪时间 $t_x=0$ ms；
+  \item 所有节点的相干时间都取 $\tau=20$ ms。
 \end{itemize}
 
-上述构造满足$\widehat{F}(a) \approx \widehat{F}(b) \approx F_0$（约束$\widehat{F}(a) \geq \widehat{F}(b)$以等号成立的形式满足），代入式~\eqref{eq:eta}：
-\begin{equation}
-  \widehat{\eta} = 1 \cdot \exp\!\bigl(-(T_a - 0) \cdot D_c\bigr) \xrightarrow{T_a \to \infty,\; D_c > 0} e^{-\infty} = 0
-  \label{eq:eta-limit}
-\end{equation}
-因此$\inf \widehat{\eta} = 0$。\hfill$\square$
+不接后缀时，显然有
 
-\subsection{物理直觉}
+\[
+F_{\mathrm{pred}}(a)=0.55 > 0.50 = F_{\mathrm{pred}}(b).
+\]
 
-上述结论的物理含义是：路径$a$依赖"高质量存储器缓冲高延迟"策略（慢而准），其路由度量（保真度）与$b$相当甚至更优；但一旦接入含有劣质存储器的后续路径$c$，路径$a$积累的大量经典时延会通过式~\eqref{eq:path-concat-surrogate}中的指数项被后续劣质存储器放大，在严格模型中则体现为Bell对角权重向量在等待与交换递推中的系统性劣化，最终导致端到端保真度远低于路径$b$。Q-CAST的$E_t$度量完全无法感知这一效应，因而在上述"错配"（mismatch）场景下做出错误的路由决策。
+接上同一个后缀后，$a \oplus x$ 的 $T_{\max}$ 是 $5$ ms，$b \oplus x$ 的 $T_{\max}$ 是 $0$ ms。于是后缀 $x$ 在 $a \oplus x$ 中需要等待 $5$ ms，而在 $b \oplus x$ 中不需要等待。根据式~\eqref{eq:waited-werner-fidelity}，
 
-\section{最坏情况拓扑的构造策略}
-\label{sec:mismatch-topology}
+\[
+g(0.90,5;20) \approx 0.7295,
+\qquad
+g(0.90,0;20)=0.90.
+\]
 
-基于上节理论分析，可以设计出系统性复现路由非保序性的随机拓扑生成策略，用于定量分析Q-CAST在异质网络参数下的失效条件。
+再代入式~\eqref{eq:werner-swap}，得到
 
-\subsection{双模参数分布}
+\[
+F_{\mathrm{pred}}(a \oplus x) \approx 0.4418,
+\qquad
+F_{\mathrm{pred}}(b \oplus x) \approx 0.4667.
+\]
 
-在生成Erdős–Rényi随机拓扑时，采用如下\textbf{双模异质分布}参数：
+因此，尽管 $a$ 在中间节点处更优，但接入同一后缀后，它反而输给了 $b$。这组数值完成了非保序性的构造性证明，也解释了单标签 \texttt{DijkstraRoutingProtocol} 会出现过早剪枝的根本原因。
 
-\begin{table}[htb]
-  \centering
-  \caption{复现路由非保序性的随机拓扑参数配置}
-  \label{tab:topo-params}
-  \begin{tabular}{llll}
-    \toprule
-    参数 & 比例 & 取值 & 物理对应 \\
-    \midrule
-    链路时延$\delta$（ms） & 10\% & 500（固定） & 卫星/跨洋链路（陷阱链路） \\
-                           & 90\% & 5（固定）   & 城域光纤（公路链路） \\
-    节点相干时间$\tau$（s） & 20\% & $10^4$     & 高质量量子存储器（完美节点） \\
-                           & 80\% & 1           & 低成本量子中继器（劣质节点） \\
-    \midrule
-    \multicolumn{4}{l}{\textbf{相关性约束：}高延迟链路两端节点须为完美节点。} \\
-    \bottomrule
-  \end{tabular}
-\end{table}
+\section{\texttt{Dijkstra} 与 \texttt{Sliced Dijkstra}}
+\label{sec:dijkstra-vs-sliced}
 
-相关性约束是必要的：若高延迟链路连接劣质节点，则路径$a$的自身保真度$F(a)$因大$T_a$乘以大$1/\tau_k$而直接衰减至极低水平，满足不了$F(a) \geq F(b)$的前提，无法构成"诱饵"场景。
+\subsection{单标签 \texttt{Dijkstra} 作为基线}
 
-\subsection{"高延时陷阱"子图}
+\texttt{DijkstraRoutingProtocol} 在当前实现中的角色是 \emph{$K=1$ 单标签基线}。它为每个节点只保留一条 incumbent label，并始终按 \texttt{predicted\_fidelity} 选择当前最优前缀；当分数相同的时候，再比较 \texttt{t\_max\_ms}，最后才比较路径长度。
 
-在生成的随机拓扑中，以如下方式寻找（或注入）\emph{高延时陷阱}（mismatch diamond）子图（图~\ref{fig:mismatch-diamond}）：
+这个策略在加性最短路问题里很自然，但在当前非保序度量下会产生风险：某个前缀只要暂时略优，就可能把另一个更慢但未来更强的前缀挤掉。换句话说，单标签 \texttt{Dijkstra} 并不是“算法实现不够精细”，而是它所依赖的局部支配前提已经不成立。
 
-\begin{figure}[htb]
-  \centering
-  \begin{tikzpicture}[
-      nd/.style  = {draw, circle, fill=white, minimum size=1cm, font=\small},
-      gnd/.style = {draw, circle, fill=gray!25, minimum size=1cm, font=\small},
-      pnd/.style = {draw, circle, fill=blue!12, minimum size=1cm, font=\small},
-    ]
-    % Nodes
-    \node[pnd] (srcA)  at (-3.5,  1.2) {$v_{s_A}$};
-    \node[pnd] (relA)  at (-1.5,  1.2) {$v_{r_A}$};
-    \node[gnd] (pivot) at ( 0.5,  0)   {$v_m$};
-    \node[gnd] (srcB)  at (-3.5, -1.2) {$v_{s_B}$};
-    \node[gnd] (relB)  at (-1.5, -1.2) {$v_{r_B}$};
-    \node[gnd] (dst)   at ( 2.5,  0)   {$v_d$};
-    % Path A (trap): high-latency link, perfect memory nodes
-    \draw[red!60!black, thick] (srcA) -- node[above, font=\scriptsize]{$\delta\!=\!5$ms}  (relA);
-    \draw[red!60!black, thick, dashed]
-      (relA) -- node[above, font=\scriptsize]{$\delta\!=\!500$ms} (pivot);
-    % Path B (highway): low-latency, garbage nodes
-    \draw[blue!60!black, thick] (srcB) -- node[below, font=\scriptsize]{$\delta\!=\!5$ms} (relB);
-    \draw[blue!60!black, thick] (relB) -- node[below, font=\scriptsize]{$\delta\!=\!5$ms} (pivot);
-    % Shared suffix
-    \draw[gray!70, thick] (pivot) -- node[above, font=\scriptsize]{$\delta\!=\!5$ms} (dst);
-    % Legend
-    \node[pnd, scale=0.7] at (1.0, 2.2) {};
-    \node[right, font=\scriptsize] at (1.35, 2.2) {完美节点（$\tau\!=\!10^4$s）};
-    \node[gnd, scale=0.7] at (1.0, 1.6) {};
-    \node[right, font=\scriptsize] at (1.35, 1.6) {劣质节点（$\tau\!=\!1$s）};
-    \node[right=0.05cm, font=\scriptsize, red!60!black] at (1.0, 1.0) {── ─ ─ 陷阱路径$a$};
-    \node[right=0.05cm, font=\scriptsize, blue!60!black] at (1.0, 0.5) {────── 公路路径$b$};
-  \end{tikzpicture}
-  \caption{高延时陷阱子图示意：路径$a$（红色虚线）含一条500\,ms高延迟陷阱链路，节点为完美存储器；路径$b$（蓝色实线）全部为5\,ms低延迟链路，节点为劣质存储器。两条路径共享到$v_d$的后续路径（灰色）。}
-  \label{fig:mismatch-diamond}
-\end{figure}
+\subsection{切片多标签搜索}
 
-在此子图中，路径$a$（陷阱路径）通过一条500\,ms的高延迟链路到达枢轴节点$v_m$，但沿途节点均为完美存储器（$\tau = 10^4$\,s），其自身保真度$F(a)$几乎不衰减；路径$b$（公路路径）全程使用5\,ms低延迟链路，但沿途节点为劣质存储器（$\tau = 1$\,s）。两条路径保真度相近，但$T_a = 500$\,ms $\gg T_b = 5$\,ms。枢轴节点$v_m$及后续路径$v_d$均为劣质节点，$D_c = 1/\tau_m + 1/\tau_d \approx 2$\,s$^{-1}$。
+\texttt{SlicedDijkstraRoutingProtocol} 采用的是多标签搜索。它允许同一节点保留最多 $K$ 条 label，并且在 \texttt{UseBuckets = true} 时沿 $T_{\max}$ 轴切片：
 
-代入式~\eqref{eq:eta}，估算surrogate保序比：
-\begin{align}
-  \widehat{\eta} &= \frac{\widehat{F}(a)}{\widehat{F}(b)} \cdot \exp\!\bigl(-(T_a - T_b) \cdot D_c\bigr) \notag \\
-       &\approx 1 \cdot \exp\!\bigl(-(0.5 - 0.005)\,\text{s} \times 2\,\text{s}^{-1}\bigr) \notag \\
-       &= e^{-0.99} \approx 0.37
-  \label{eq:eta-example}
-\end{align}
+\[
+\texttt{bucket\_id}(p)
+=
+\left\lfloor \frac{T_{\max}(p)}{\texttt{BucketWidthMs}} \right\rfloor .
+\]
 
-即Q-CAST选择保真度优先的路径$a$后，实际端到端保真度仅为选择路径$b$的37\%，出现严重的路由决策失误。若$D_c$更大（如枢轴节点后接多个劣质中继），$\widehat{\eta}$可趋近于零。
+这个设计的目标不是简单“保留更多路径”，而是让不同时间瓶颈的前缀可以共存。这样一来，快但略弱的前缀和慢但更强的前缀都有机会活到后缀接入之后，再由真实的路径级重算决定最终胜者。
 
-\subsection{与Q-CAST度量的对比}
+当 \texttt{UseBuckets = false} 时，算法退化为基于 \texttt{predicted\_fidelity} 和 \texttt{t\_max\_ms} 的 Pareto 多标签搜索。也就是说，它不再只看分数高低，而是同时要求“保真度更高且时间瓶颈不更差”才允许支配关系成立。
 
-在上述高延时陷阱场景中，Q-CAST计算$E_t$时假设链路参数均匀、不考虑时延差异。由于路径$a$的链路保真度（初始值）与路径$b$相近甚至更高，$E_t(a) \geq E_t(b)$，Q-CAST将选择路径$a$。然而如式~\eqref{eq:eta-example}所示，该选择导致了约63\%的端到端保真度损失，严重偏离最优决策。
+\subsection{算法流程}
 
-\section{卫星量子网络中的非保序性自然实例}
-\label{sec:satellite-non-isotonicity}
+算法~\ref{alg:sliced-dijkstra} 给出了当前实现的核心流程。为了突出与普通 Dijkstra 的差异，伪代码只保留路由搜索本身，省略拓扑缓存、日志和 ns-3 对象管理细节。
 
-上节的"高延时陷阱"在理论上需要刻意构造——高延迟链路必须与完美存储器相配对。然而，在星地混合量子网络的现实部署中，这一条件天然满足，无需人为设计。QuESat~\cite{gu2025quesat}提出了一种由低地球轨道（LEO）卫星星座构成的被动光学量子中继网络，旨在实现全球尺度的纠缠分发，提供了一个典型的自然实例。
+\begin{algorithm}[htb]
+  \caption{Sliced Dijkstra 的多标签搜索流程}
+  \label{alg:sliced-dijkstra}
+  \begin{algorithmic}[1]
+    \REQUIRE 源节点 $s$，目的节点 $t$，拓扑 $G$，每节点标签上限 $K$，桶宽 $B$
+    \ENSURE 从 $s$ 到 $t$ 的候选路径
+    \STATE $L[v] \gets \emptyset$ for all $v \in G$
+    \STATE $l_0 \gets$ \texttt{CreateInitialLabel}$(s)$
+    \STATE $L[s] \gets \{l_0\}$，并将 $l_0$ 插入按 \texttt{predicted\_fidelity} 排序的优先队列 $Q$
+    \STATE $best \gets \emptyset$
+    \WHILE{$Q$ 非空}
+      \STATE $l \gets Q.\texttt{pop}()$
+      \STATE $u \gets$ $l$ 的末端节点
+      \IF{$l$ 已不在 $L[u]$ 中}
+        \STATE \textbf{continue}
+      \ENDIF
+      \IF{$u=t$}
+        \STATE 若 $l$ 优于 $best$，则 $best \gets l$
+        \STATE \textbf{continue}
+      \ENDIF
+      \FOR{每条可用出边 $(u,v)$}
+        \STATE $l' \gets$ \texttt{ExtendLabel}$(l,v)$
+        \IF{$l'$ 被 \texttt{AdmitLabel}$(v,l')$ 接收}
+          \STATE 将 $l'$ 插入 $Q$
+        \ENDIF
+      \ENDFOR
+    \ENDWHILE
+    \RETURN $best$ 对应的节点路径
+  \end{algorithmic}
+\end{algorithm}
 
-\subsection{星地混合链路的物理特性}
+其中，\texttt{AdmitLabel} 是切片算法的关键。若启用 bucket，则候选 label 先按
 
-卫星量子信道的核心优势在于信道损耗极低。自由空间光学（FSO）链路在晴天条件下的等效损耗约为$10^{-3}$至$10^{-4}$\,dB/km，远优于地面光纤的0.2\,dB/km。这意味着，通过卫星进行长距离纠缠分发时，链路初始保真度$F_0$几乎不受距离衰减的影响——这正是高质量量子存储器节点（$\tau \to \infty$）在失配模型中所扮演的角色。
+\[
+\left\lfloor \frac{T_{\max}}{B} \right\rfloor
+\]
 
-然而，低轨道卫星的轨道高度约为500–2000\,km，卫星与地面站之间的单次信号传播时延约为1.7–6.7\,ms；对于需要跨洲际多跳中继的场景，经典控制信令须逐跳经由星间链路（ISL）传递，累积时延可达数十毫秒。QuESat的全球组网分析表明，对于覆盖距离约10\,000\,km的跨洋路径，端到端经典信令时延可达约100\,ms量级~\cite{gu2025quesat}。
+落入固定时间桶；同一节点同一桶中只保留 \texttt{IsBetter} 意义下最好的代表。若未启用 bucket，则采用 \texttt{Dominates} 定义的 Pareto 支配关系：只有当一个 label 在 \texttt{predicted\_fidelity} 上不低、在 \texttt{t\_max\_ms} 上不高，并且至少一项严格更好时，才可以删除另一个 label。每次插入后，同一节点的标签集合都会按 \texttt{IsBetter} 排序，并截断到最多 $K$ 条。
 
-与此形成对比的是，地面光纤段的经典时延则由光在单模光纤中的传播速度（约$2\times10^5$\,km/s）决定，城域段（$\lesssim 100$\,km）时延约0.5\,ms，跨城段（$\sim 500$\,km）约2.5\,ms，均远小于卫星段的时延。
+设图中节点数为 $|V|$、边数为 $|E|$。由于每个节点最多保留 $K$ 条 label，搜索过程中最多有 $O(K|V|)$ 个活跃 label，每个活跃 label 至多扩展其出边一次，因此边扩展次数为 $O(K|E|)$。每次扩展需要调用 \texttt{ExtendLabel} 对整条前缀重算 $T_{\max}$、等待退相干和 Bell 对角态交换；若当前前缀长度为 $h$，这一部分代价为 $O(h)$。此外，\texttt{AdmitLabel} 至多扫描同节点的 $K$ 条 label，优先队列操作带来 $O(\log(K|V|))$ 的代价。因此，切片算法相对于单标签基线的额外成本主要来自两个方面：同一节点保留多个候选，以及每个候选扩展时无法使用加性增量更新，只能重算完整前缀。
 
-\subsection{失配条件的自然满足}
+\subsection{为什么切片能缓解反转}
 
-将上述物理参数对应到§\ref{sec:mismatch-topology}的高延时陷阱模型：
+对当前模型来说，\texttt{Sliced Dijkstra} 的价值在于它不会把所有前缀都压缩成一个 incumbent。只要两个候选前缀落在不同的 $T_{\max}$ 切片里，它们就可以同时留下来。这样，当后缀的等待敏感性足够强时，算法仍然有机会从保留下来的慢前缀和快前缀之间选出真正更优的那一条，而不是被单标签基线提前锁死。
+
+从这个角度看，\texttt{Sliced Dijkstra} 不是“更复杂的 \texttt{Dijkstra}”，而是对非保序度量的一种结构化修正。
+
+\subsection{算法保证与限制}
+
+需要特别说明的是，\texttt{Sliced Dijkstra} 是一种面向当前非保序度量的启发式修正，而不是全局最优路径枚举算法。它相对单标签 \texttt{Dijkstra} 的优势在于扩大了同一节点可保留的前缀集合，尤其允许不同 $T_{\max}$ 切片的候选共存；但只要 $K$ 有限，或者同一 bucket 内仍然只保留一个局部代表，它就仍然可能丢弃某条未来会变好的前缀。
+
+更形式化地说，若希望切片算法严格不劣于单标签 \texttt{Dijkstra}，至少需要满足如下条件之一：
+
+\begin{enumerate}
+  \item 切片算法在每个节点保留了单标签 \texttt{Dijkstra} 最终路径所需的所有前缀；
+  \item 或者，被保留的前缀能够在任意后缀扩展下支配被删除的前缀。
+\end{enumerate}
+
+当前实现并不保证这两个条件。特别是在同一节点、同一 $T_{\max}$ bucket 内，局部 \texttt{predicted\_fidelity} 更高的 label 不一定能够代表同桶内所有其他 label。一个局部分数稍低但 $T_{\max}$ 更小、跳数更少的前缀，可能在接入后续链路后重新胜出。因此，本文将 \texttt{Sliced Dijkstra} 定位为降低前缀陷阱概率的多标签基线，而不是具有最优性保证的精确算法。若后续实验需要报告“切片增强算法不低于单标签基线”的工程结果，可以在外层加入 baseline fallback：同时运行单标签 \texttt{Dijkstra} 与切片算法，并用同一个 \texttt{BottleneckFidelityRoutingMetric} 重新评估两条完整路径，最终返回预测保真度更高者。
+
+\section{证明与实现对照}
+\label{sec:proof-implementation}
+
+当前代码中的 \texttt{BottleneckFidelityRoutingMetric} 已经把证明中的关键量都显式暴露出来了：
 
 \begin{itemize}
-  \item \textbf{陷阱路径$a$（卫星段）：}卫星链路的低损耗使得纠缠初始保真度$F_0 \approx 0.95$以上，而完美的自由空间信道等效为"完美节点"（$\tau_k^{(a)} \to \infty$）；但累积经典信令时延$T_a$可达$\sim 100$\,ms。
-  \item \textbf{公路路径$b$（地面光纤段）：}地面短距离光纤链路时延极低（$T_b \sim 5$\,ms），但地面量子中继节点通常采用低成本的原子系综存储器，相干时间$\tau \sim 0.1$–$1$\,s，属于"劣质存储器"节点。
-  \item \textbf{后续路径$c$（末段地面节点）：}全球网络的目的节点往往位于地面，其接入链路通过地面量子中继器组成，$S_c = \sum_k 1/\tau_k$显著，$D_c > 0$。
+  \item \texttt{t\_max\_ms} 对应路径的时间瓶颈；
+  \item \texttt{predicted\_fidelity} 对应路径的当前打分；
+  \item \texttt{IsBetter} 先比较 \texttt{predicted\_fidelity}，再比较 \texttt{t\_max\_ms}，最后比较路径长度；
+  \item \texttt{Dominates} 则要求在保真度和时间瓶颈上同时不劣，且至少一项严格更好。
 \end{itemize}
 
-上述参数天然符合高延时陷阱的构造前提，无需手动调整。
+因此，论文里的理论分析和代码实现是一致的：单标签 \texttt{Dijkstra} 只能作为基线，而真正有能力保留潜在反转路径的，是按 $T_{\max}$ 保留多个 slice 的多标签搜索。
 
-\subsection{数值估算}
+\section{实验设计占位}
+\label{sec:experiment-placeholder}
 
-以三跳卫星路径（$T_a \approx 3 \times 33\,\text{ms} = 99\,\text{ms}$）对比两跳地面光纤路径（$T_b \approx 2 \times 5\,\text{ms} = 10\,\text{ms}$）为例，假设后续路径连接两个相干时间$\tau_m = \tau_d = 0.1$\,s的地面中继节点，则：
-\begin{equation}
-  D_c = \frac{1}{\tau_m} + \frac{1}{\tau_d} = 10 + 10 = 20\;\text{s}^{-1}
-  \label{eq:Dc-satellite}
-\end{equation}
-代入式~\eqref{eq:eta}：
-\begin{align}
-  \widehat{\eta} &= \frac{\widehat{F}(a)}{\widehat{F}(b)} \cdot \exp\!\bigl(-(T_a - T_b) \cdot D_c\bigr) \notag \\
-       &\approx 1 \cdot \exp\!\bigl(-(0.099 - 0.010)\,\text{s} \times 20\,\text{s}^{-1}\bigr) \notag \\
-       &= e^{-1.78} \approx 0.17
-  \label{eq:eta-satellite}
-\end{align}
+本章暂不报告最终实验数值，只保留后续验证所需的设计占位。后续实验将重点检查以下问题：
 
-即在这一实际的星地混合场景中，若Q-CAST误选卫星路径，最终端到端保真度仅为正确路径的17\%，非保序性效应远比§\ref{sec:mismatch-topology}中的人工构造场景更为严重。这表明，随着QuESat等星地混合量子网络架构的部署，保真度感知路由算法将不再只是理论上的优化改进，而是维持网络正确性的必要条件。
+\begin{enumerate}
+  \item 在手工构造的前缀陷阱拓扑上，单标签 \texttt{Dijkstra} 是否会在中间节点过早剪枝；
+  \item \texttt{Sliced Dijkstra} 是否能保留不同 $T_{\max}$ 切片，从而恢复被单标签丢掉的候选；
+  \item 在真实拓扑和随机拓扑上，切片宽度 \texttt{BucketWidthMs} 与保留上限 $K$ 如何影响路由结果；
+  \item 最终选路是否与混态仿真得到的端到端保真度一致。
+\end{enumerate}
+
+这些结果将在后续实验章节中补充。当前版本先给出理论模型、算法语义与证明骨架，以保证后续实验叙述不会偏离代码实现。

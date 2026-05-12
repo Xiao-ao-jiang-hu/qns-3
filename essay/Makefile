@@ -35,7 +35,7 @@ doc: $(PACKAGE).pdf
 $(PACKAGE).pdf: cls FORCE_MAKE
 	$(LATEXMK) $(PACKAGE).dtx
 
-$(THESIS).pdf: cls FORCE_MAKE
+$(THESIS).pdf: FORCE_MAKE
 	$(LATEXMK) $(THESIS)
 
 viewdoc: doc
