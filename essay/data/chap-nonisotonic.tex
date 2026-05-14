@@ -1,92 +1,75 @@
 % !TeX root = ../thuthesis-example.tex
 %
-% 第四章：量子路由度量的非保序性分析
+% 第三章：路由算法与下界分析
 %
 
-\chapter{量子路由度量的非保序性分析}
+\chapter{路由算法与下界分析}
 \label{chap:nonisotonic}
 
-本章在第~\ref{chap:phymodel}章路径级物理模型的基础上，分析当前 qns-3 路由度量为什么不是保序的，并说明单标签 \texttt{DijkstraRoutingProtocol} 为什么会在这种度量下过早剪枝。随后给出 \texttt{SlicedDijkstraRoutingProtocol} 的多标签切片语义，解释它如何通过保留不同 $T_{\max}$ 前缀来缓解排序反转。实验部分暂不报告最终数值，只保留后续验证所需的设计占位。
+本章在第~\ref{chap:phymodel}章路径级物理模型的基础上，依次讨论量子路由面对的主要困难、单标签 Dijkstra 基线、路径级保真度度量的非保序性、单标签 Dijkstra 相对于实际最优路径的下界、切片 Dijkstra 的提出，以及切片算法对应的下界保证。本文把“实际最优路径”定义为在同一网络拓扑、同一链路初始保真度、同一建链时间和同一相干时间参数下，使 $F_{\mathrm{path}}(p)$ 最大的简单路径。
 
-\section{路径标签与当前路由度量}
-\label{sec:current-metric}
+\section{量子路由的困难}
+\label{sec:quantum-routing-difficulty}
 
-当前实现中的路径不是一个单一标量，而是一条完整的 label。对路径
-
+设网络图为 $G=(V,E)$，源节点为 $s$，目的节点为 $t$，从 $s$ 到 $t$ 的简单路径集合记为 $\mathcal{P}_{s,t}$。对任意路径
 \[
-p = (v_0, v_1, \ldots, v_h),
+p=(v_0,v_1,\ldots,v_h),
+\qquad v_0=s,\quad v_h=t,
 \]
+路径级保真度由第~\ref{chap:phymodel}章的等待退相干和 Bell 对角态交换递推给出，记为 $F_{\mathrm{path}}(p)$。实际最优路径为
+\begin{equation}
+  p^\star
+  \in
+  \arg\max_{p\in\mathcal{P}_{s,t}} F_{\mathrm{path}}(p),
+  \qquad
+  F^\star = F_{\mathrm{path}}(p^\star).
+  \label{eq:actual-optimal-path}
+\end{equation}
 
-其标签中显式保存了每一段链路的原始参数：
+与经典加性最短路不同，本文的路径质量函数具有三个直接后果。第一，新增一段链路会改变整条路径的 $T_{\max}$，从而改变已有链路的等待时间；第二，等待后的各段 Bell 对角态再经过递归纠缠交换，端到端保真度不能由单条边权相加得到；第三，中间节点处较优的前缀，在接入同一后缀后未必仍然较优。因此，路由算法的核心困难在于搜索过程中如何保留未来可能反超的前缀，并避免因局部比较过早剪枝。
 
-\begin{itemize}
-  \item \texttt{initialFidelity}，表示该段链路的初始 Bell 态保真度；
-  \item \texttt{noiseFamily}，表示该段链路的噪声族；
-  \item \texttt{setupTimeMs}，表示该段链路的就绪时间；
-  \item 左右端节点的相干时间 $\tau$。
-\end{itemize}
+\section{单标签 Dijkstra 基线}
+\label{sec:dijkstra-baseline}
 
-这些段信息会在扩展时被重新扫描，并共同决定当前 label 的两个核心量：
+最直接的基线是单标签 Dijkstra。该算法对每个节点 $v$ 只保留一条从 $s$ 到 $v$ 的候选前缀，记为 $\ell(v)$。优先队列按照候选前缀的 $F_{\mathrm{path}}$ 从高到低弹出；若两个候选的保真度相同，则优先选择 $T_{\max}$ 更小、路径更短的候选。每次从队列中取出一个前缀后，算法将其末端节点的出边逐一接入，并用新路径的完整物理参数重新计算 $F_{\mathrm{path}}$ 和 $T_{\max}$。
 
-\[
-T_{\max}(p) = \max_j T_j,
-\qquad
-F_{\mathrm{pred}}(p) = \texttt{predicted\_fidelity}(p).
-\]
+单标签 Dijkstra 的计算代价较低。若忽略路径级重算的内部代价，它与普通最好优先搜索类似；若一条长度为 $h$ 的前缀每次扩展都需要重新计算等待退相干和 Bell 对角态交换，则一次扩展的物理度量计算代价为 $O(h)$。该算法的关键限制在于：每个中间节点只有一个保留前缀。只要被删除的前缀在接入后缀后可能反超，单标签剪枝就可能破坏全局最优性。
 
-其中 $T_j$ 是第 $j$ 段链路的 \texttt{setupTimeMs}。当前 metric 的计算不是“在旧分数上加一项”，而是对整条前缀重新执行：
-
-\begin{enumerate}
-  \item 计算整条路径的 $T_{\max}$；
-  \item 令更快的链路等待 $T_{\max} - T_j$；
-  \item 对等待后的 Bell 对角态递归做纠缠交换；
-  \item 从最终 Bell 对角态的第一个分量读取 \texttt{predicted\_fidelity}。
-\end{enumerate}
-
-因此，当前 metric 本质上是一个“前缀重算”的路径质量函数，而不是一个可加的边权和。
-
-\section{度量的非保序性}
+\section{非保序性的论证}
 \label{sec:non-isotonicity}
 
 \subsection{保序性的定义}
 
-若一个路径度量 $F$ 满足
-
+若一个路径度量 $F$ 对任意两条同终点前缀 $a,b$ 和任意可拼接后缀 $c$ 满足
 \begin{equation}
-  F(a) \ge F(b) \implies F(a \oplus c) \ge F(b \oplus c)
+  F(a) \ge F(b)
+  \implies
+  F(a\oplus c) \ge F(b\oplus c),
   \label{eq:isotonicity-def}
 \end{equation}
+则称该度量在路径拼接下是保序的。经典 Dijkstra 的局部剪枝依赖这一结构：一旦某个前缀在中间节点处已经最优，拼接相同后缀后它仍然不劣。
 
-则称它在路径拼接下是保序的。这个性质对经典最短路径算法非常关键，因为它保证了局部最优前缀拼接后仍然不劣于局部次优前缀。
+本文的 $F_{\mathrm{path}}$ 不满足式~\eqref{eq:isotonicity-def}。原因在于，路径拼接会重新决定 $T_{\max}$，并由此重新分配所有链路的等待时间。一个前缀在中间节点处保真度较高，可能同时携带较大的时间瓶颈；当它接入一个快速后缀时，后缀需要等待该时间瓶颈，从而发生额外退相干。另一个局部保真度稍低但时间瓶颈更小的前缀，则可能在同一后缀下保持更高的最终保真度。
 
-当前实现中的 \texttt{predicted\_fidelity} 不满足这一性质。原因不是某一条边的局部打分出了错，而是 $T_{\max}$ 会在拼接后重新决定所有已建链路的等待时间，使得一个“当前更好”的前缀在接入共同后缀后，反而更快被退相干拖垮。
+\subsection{构造性反例}
 
-\subsection{一个构造性反例}
-
-为了避免把复杂递推写成一个不存在的闭式，我们直接使用当前代码中已经实现的两步演化来构造反例。
-
-先考虑一条单段 Werner 路径。若其初始保真度为 $F$，左右两端的相干时间都取 $\tau$，并且该段在交换前需要等待 $\Delta$，则其等待后的 \textit{$\Phi^+$} 权重为
-
+先考虑一条单段 Werner 路径。若其初始保真度为 $F$，左右端相干时间均为 $\tau$，并且交换前等待 $\Delta$，则由式~\eqref{eq:single-link-fidelity} 可得等待后的 $\Phi^+$ 权重为
 \begin{equation}
   g(F,\Delta;\tau)
   =
   \frac{2F + 1 + e^{-2\Delta/\tau}(4F - 1)}{6}.
   \label{eq:waited-werner-fidelity}
 \end{equation}
+在 $F>1/4$ 的物理区间内，$g$ 随 $F$ 单调递增，随 $\Delta$ 单调递减。
 
-这正是 \texttt{ApplyPhaseFlipMemoryWait} 在 Werner 输入、对称相干时间和对称等待时间下的特例。可以直接看出，式~\eqref{eq:waited-werner-fidelity} 随 $F$ 单调递增，随 $\Delta$ 单调递减。
-
-再考虑一个固定后缀 $x$。若后缀在交换时的 Bell 保真度为 $F_x>1/4$，则 Werner 交换公式
-
+两段 Werner 态经过理想纠缠交换后的 $\Phi^+$ 保真度为
 \begin{equation}
   S(F_1,F_2)
   =
-  F_1F_2 + \frac{(1-F_1)(1-F_2)}{3}
+  F_1F_2 + \frac{(1-F_1)(1-F_2)}{3}.
   \label{eq:werner-swap}
 \end{equation}
-
-关于每一个自变量都是单调递增的，因为
-
+当 $F_1,F_2>1/4$ 时，$S$ 关于每个自变量单调递增，因为
 \[
   \frac{\partial S}{\partial F_1}
   =
@@ -94,183 +77,231 @@ F_{\mathrm{pred}}(p) = \texttt{predicted\_fidelity}(p).
   \qquad
   \frac{\partial S}{\partial F_2}
   =
-  \frac{4F_1 - 1}{3},
+  \frac{4F_1 - 1}{3}.
 \]
 
-在本节关注的物理区间 $F_1,F_2>1/2$ 内，这两个偏导都为正。
-
-于是，只要存在两个前缀 $a,b$，使得
-
+取两个到同一中间节点的前缀 $a,b$ 和一个共享后缀 $x$。令
 \[
-F_{\mathrm{pred}}(a) > F_{\mathrm{pred}}(b),
+F_{\mathrm{path}}(a)>F_{\mathrm{path}}(b),
 \qquad
-T_{\max}(a) > T_{\max}(b),
+T_{\max}(a)>T_{\max}(b).
 \]
-
-并且在接入同一快速后缀 $x$ 后，$x$ 在 $a \oplus x$ 中需要比在 $b \oplus x$ 中等待更长时间，那么就可能出现
-
+若后缀 $x$ 的建链时间较小，则在 $a\oplus x$ 中，$x$ 需要等待的时间可能大于其在 $b\oplus x$ 中的等待时间。只要
 \[
-S\!\bigl(F_{\mathrm{pred}}(a), g(F_x,\Delta_x^{(a)};\tau)\bigr)
+S\!\bigl(F_{\mathrm{path}}(a),g(F_x,\Delta_x^{(a)};\tau)\bigr)
 <
-S\!\bigl(F_{\mathrm{pred}}(b), g(F_x,\Delta_x^{(b)};\tau)\bigr),
+S\!\bigl(F_{\mathrm{path}}(b),g(F_x,\Delta_x^{(b)};\tau)\bigr),
+\qquad
+\Delta_x^{(a)}>\Delta_x^{(b)},
 \]
-
-其中 $\Delta_x^{(a)}>\Delta_x^{(b)}$。于是由式~\eqref{eq:werner-swap} 推出
-
+就得到
 \[
-F_{\mathrm{pred}}(a \oplus x)
+F_{\mathrm{path}}(a\oplus x)
 <
-F_{\mathrm{pred}}(b \oplus x).
+F_{\mathrm{path}}(b\oplus x).
 \]
 
-下面的数值例子给出一组满足该不等式的参数，从而完成构造性证明。
-
-\subsection{一个具体数值例子}
-
-为了把上述构造说得更直观，可以取如下参数：
-
-\begin{itemize}
-  \item 前缀 $a$：单段路径，初始保真度 $F_a=0.55$，就绪时间 $t_a=5$ ms；
-  \item 前缀 $b$：单段路径，初始保真度 $F_b=0.50$，就绪时间 $t_b=0$ ms；
-  \item 共享后缀 $x$：单段路径，初始保真度 $F_x=0.90$，就绪时间 $t_x=0$ ms；
-  \item 所有节点的相干时间都取 $\tau=20$ ms。
-\end{itemize}
-
-不接后缀时，显然有
-
+例如取
 \[
-F_{\mathrm{pred}}(a)=0.55 > 0.50 = F_{\mathrm{pred}}(b).
+F_a=0.55,\quad T_a=5\ \mathrm{ms},
+\qquad
+F_b=0.50,\quad T_b=0\ \mathrm{ms},
 \]
-
-接上同一个后缀后，$a \oplus x$ 的 $T_{\max}$ 是 $5$ ms，$b \oplus x$ 的 $T_{\max}$ 是 $0$ ms。于是后缀 $x$ 在 $a \oplus x$ 中需要等待 $5$ ms，而在 $b \oplus x$ 中不需要等待。根据式~\eqref{eq:waited-werner-fidelity}，
-
 \[
-g(0.90,5;20) \approx 0.7295,
+F_x=0.90,\quad T_x=0\ \mathrm{ms},
+\qquad
+\tau=20\ \mathrm{ms}.
+\]
+不接后缀时有 $F_{\mathrm{path}}(a)=0.55>0.50=F_{\mathrm{path}}(b)$。接入同一后缀后，
+\[
+g(0.90,5;20)\approx 0.7295,
 \qquad
 g(0.90,0;20)=0.90.
 \]
-
-再代入式~\eqref{eq:werner-swap}，得到
-
+代入式~\eqref{eq:werner-swap} 得
 \[
-F_{\mathrm{pred}}(a \oplus x) \approx 0.4418,
+F_{\mathrm{path}}(a\oplus x)\approx 0.4418,
 \qquad
-F_{\mathrm{pred}}(b \oplus x) \approx 0.4667.
+F_{\mathrm{path}}(b\oplus x)\approx 0.4667.
 \]
+因此，路径级保真度在实际等待模型下发生排序反转，单标签 Dijkstra 的局部剪枝前提不成立。
 
-因此，尽管 $a$ 在中间节点处更优，但接入同一后缀后，它反而输给了 $b$。这组数值完成了非保序性的构造性证明，也解释了单标签 \texttt{DijkstraRoutingProtocol} 会出现过早剪枝的根本原因。
+\section{单标签 Dijkstra 的下界证明}
+\label{sec:dijkstra-lower-bound}
 
-\section{\texttt{Dijkstra} 与 \texttt{Sliced Dijkstra}}
-\label{sec:dijkstra-vs-sliced}
+非保序性说明单标签 Dijkstra 不能保证找到 $p^\star$。本节进一步分析它相对于实际最优路径 $p^\star$ 的下界。结论分为两部分：其一，在给定实际参数范围后，任何返回的可行路径都有一个可计算的保真度下界；其二，若不加入额外保序假设，单标签 Dijkstra 相对于 $F^\star$ 的最坏情形只能保证这一平凡下界。
 
-\subsection{单标签 \texttt{Dijkstra} 作为基线}
+令可用链路集合为 $E_{\mathrm{a}}$。定义全图建链时间跨度
+\begin{equation}
+  \Delta_G
+  =
+  \max_{e\in E_{\mathrm{a}}} T(e)
+  -
+  \min_{e\in E_{\mathrm{a}}} T(e),
+  \label{eq:global-time-span}
+\end{equation}
+并令 $H=|V|-1$ 为简单路径的最大跳数。对一条链路 $e=(u,v)$，记其初始 Werner 保真度为 $F_e^{(0)}$，两端相干时间为 $\tau_u,\tau_v$。在等待时间 $w$ 下，其等待后的 $\Phi^+$ 权重为
+\begin{equation}
+  a_e(w)
+  =
+  \frac{
+    2F_e^{(0)}+1+
+    \exp\!\left(-\frac{w}{\tau_u}-\frac{w}{\tau_v}\right)
+    (4F_e^{(0)}-1)
+  }{6}.
+  \label{eq:edge-wait-lower-component}
+\end{equation}
+定义由实际参数诱导的单链路保真度下界
+\begin{equation}
+  \alpha_G
+  =
+  \min_{e\in E_{\mathrm{a}}}\;
+  \min_{0\le w\le \Delta_G}
+  a_e(w).
+  \label{eq:alpha-g}
+\end{equation}
+若所有可用链路满足 $F_e^{(0)}\ge 1/4$，则 $a_e(w)$ 关于 $w$ 单调不增，此时内层最小值在 $w=\Delta_G$ 处取得。
 
-\texttt{DijkstraRoutingProtocol} 在当前实现中的角色是 \emph{$K=1$ 单标签基线}。它为每个节点只保留一条 incumbent label，并始终按 \texttt{predicted\_fidelity} 选择当前最优前缀；当分数相同的时候，再比较 \texttt{t\_max\_ms}，最后才比较路径长度。
+\paragraph{命题 1}
+对任意简单路径 $p$，若其跳数为 $h(p)$，则
+\begin{equation}
+  F_{\mathrm{path}}(p)
+  \ge
+  \alpha_G^{h(p)}
+  \ge
+  \alpha_G^{H}.
+  \label{eq:any-path-lower-bound}
+\end{equation}
 
-这个策略在加性最短路问题里很自然，但在当前非保序度量下会产生风险：某个前缀只要暂时略优，就可能把另一个更慢但未来更强的前缀挤掉。换句话说，单标签 \texttt{Dijkstra} 并不是“算法实现不够精细”，而是它所依赖的局部支配前提已经不成立。
-
-\subsection{切片多标签搜索}
-
-\texttt{SlicedDijkstraRoutingProtocol} 采用的是多标签搜索。它允许同一节点保留最多 $K$ 条 label，并且在 \texttt{UseBuckets = true} 时沿 $T_{\max}$ 轴切片：
-
+\paragraph{证明}
+路径 $p$ 上任意链路的等待时间均不超过 $\Delta_G$，故等待后该链路 Bell 对角态的第一个分量不小于 $\alpha_G$。设两个 Bell 对角态的权重向量分别为 $w=(a,b,c,d)$ 与 $w'=(a',b',c',d')$。由式~\eqref{eq:bell-swap-operator}，交换后第一个分量为
 \[
-\texttt{bucket\_id}(p)
-=
-\left\lfloor \frac{T_{\max}(p)}{\texttt{BucketWidthMs}} \right\rfloor .
+aa' + bb' + cc' + dd'
+\ge aa'.
 \]
+因此，每进行一次交换，输出态的第一个分量至少为两个输入第一个分量的乘积。沿 $h(p)$ 条链路递推，即得
+\[
+F_{\mathrm{path}}(p)\ge \prod_{e\in p}\alpha_G=\alpha_G^{h(p)}.
+\]
+又因 $h(p)\le H$ 且 $0\le\alpha_G\le 1$，故式~\eqref{eq:any-path-lower-bound} 成立。 \(\square\)
 
-这个设计的目标不是简单“保留更多路径”，而是让不同时间瓶颈的前缀可以共存。这样一来，快但略弱的前缀和慢但更强的前缀都有机会活到后缀接入之后，再由真实的路径级重算决定最终胜者。
+设单标签 Dijkstra 返回路径 $p_D$，跳数为 $h_D$，其保真度为 $F_D=F_{\mathrm{path}}(p_D)$。由于 $F^\star\le 1$，由命题 1 立刻得到相对于实际最优路径的下界
+\begin{equation}
+  \frac{F_D}{F^\star}
+  \ge
+  F_D
+  \ge
+  \alpha_G^{h_D}
+  \ge
+  \alpha_G^H.
+  \label{eq:dijkstra-lower-bound}
+\end{equation}
+等价地，加性损失满足
+\begin{equation}
+  F^\star - F_D
+  \le
+  1-\alpha_G^{h_D}
+  \le
+  1-\alpha_G^H.
+  \label{eq:dijkstra-additive-bound}
+\end{equation}
 
-当 \texttt{UseBuckets = false} 时，算法退化为基于 \texttt{predicted\_fidelity} 和 \texttt{t\_max\_ms} 的 Pareto 多标签搜索。也就是说，它不再只看分数高低，而是同时要求“保真度更高且时间瓶颈不更差”才允许支配关系成立。
+式~\eqref{eq:dijkstra-lower-bound} 是一个由实际网络参数计算得到的严格下界，但它通常较弱。其原因在于单标签 Dijkstra 在非保序度量下确实可能删除实际最优路径的必要前缀。对任意给定的中间节点，可以构造两个前缀 $a,b$ 和共享后缀 $x$，使 $F_{\mathrm{path}}(a)>F_{\mathrm{path}}(b)$，但 $F_{\mathrm{path}}(a\oplus x)<F_{\mathrm{path}}(b\oplus x)$。单标签 Dijkstra 会保留 $a$ 并删除 $b$，从而无法生成包含 $b\oplus x$ 的最优路径。因此，在不增加额外结构假设的情况下，不能证明单标签 Dijkstra 具有比式~\eqref{eq:dijkstra-lower-bound} 更强的普适近似保证。
 
-\subsection{算法流程}
+\section{切片 Dijkstra 算法}
+\label{sec:sliced-dijkstra}
 
-算法~\ref{alg:sliced-dijkstra} 给出了当前实现的核心流程。为了突出与普通 Dijkstra 的差异，伪代码只保留路由搜索本身，省略拓扑缓存、日志和 ns-3 对象管理细节。
+上述失败机制表明，单个中间节点处只保留一条前缀过于激进。切片 Dijkstra 的基本思想是沿 $T_{\max}$ 轴保留多个代表性前缀，使时间瓶颈不同的候选能够共存。给定桶宽 $\Delta_B>0$，定义路径 $p$ 的时间切片编号为
+\begin{equation}
+  \beta(p)
+  =
+  \left\lfloor
+    \frac{T_{\max}(p)}{\Delta_B}
+  \right\rfloor .
+  \label{eq:time-slice-id}
+\end{equation}
+算法在每个节点维护至多 $K$ 条候选前缀。不同时间切片中的候选可以同时保留；同一节点、同一时间切片内，优先保留 $F_{\mathrm{path}}$ 更高的候选，若保真度相同，则选择 $T_{\max}$ 更小、跳数更少的候选。
 
 \begin{algorithm}[htb]
-  \caption{Sliced Dijkstra 的多标签搜索流程}
+  \caption{切片 Dijkstra 的多标签搜索流程}
   \label{alg:sliced-dijkstra}
   \begin{algorithmic}[1]
-    \REQUIRE 源节点 $s$，目的节点 $t$，拓扑 $G$，每节点标签上限 $K$，桶宽 $B$
+    \REQUIRE 源节点 $s$，目的节点 $t$，拓扑 $G$，每节点候选上限 $K$，桶宽 $\Delta_B$
     \ENSURE 从 $s$ 到 $t$ 的候选路径
-    \STATE $L[v] \gets \emptyset$ for all $v \in G$
-    \STATE $l_0 \gets$ \texttt{CreateInitialLabel}$(s)$
-    \STATE $L[s] \gets \{l_0\}$，并将 $l_0$ 插入按 \texttt{predicted\_fidelity} 排序的优先队列 $Q$
-    \STATE $best \gets \emptyset$
+    \STATE $\mathcal{L}(v) \gets \emptyset,\ \forall v\in V$
+    \STATE 构造以 $s$ 为末端的初始前缀 $\ell_0$，并置 $\mathcal{L}(s)\gets\{\ell_0\}$
+    \STATE 将 $\ell_0$ 插入按 $F_{\mathrm{path}}$ 排序的优先队列 $Q$
+    \STATE $p_{\mathrm{best}}\gets\emptyset$
     \WHILE{$Q$ 非空}
-      \STATE $l \gets Q.\texttt{pop}()$
-      \STATE $u \gets$ $l$ 的末端节点
-      \IF{$l$ 已不在 $L[u]$ 中}
+      \STATE 取出 $Q$ 中保真度最高的候选前缀 $\ell$
+      \STATE $u\gets \ell$ 的末端节点
+      \IF{$\ell\notin \mathcal{L}(u)$}
         \STATE \textbf{continue}
       \ENDIF
       \IF{$u=t$}
-        \STATE 若 $l$ 优于 $best$，则 $best \gets l$
+        \STATE 若 $\ell$ 优于 $p_{\mathrm{best}}$，则 $p_{\mathrm{best}}\gets \ell$
         \STATE \textbf{continue}
       \ENDIF
       \FOR{每条可用出边 $(u,v)$}
-        \STATE $l' \gets$ \texttt{ExtendLabel}$(l,v)$
-        \IF{$l'$ 被 \texttt{AdmitLabel}$(v,l')$ 接收}
-          \STATE 将 $l'$ 插入 $Q$
+        \STATE 令 $\ell'$ 为 $\ell$ 接入 $(u,v)$ 后得到的新前缀
+        \STATE 根据时间切片和候选上限更新 $\mathcal{L}(v)$
+        \IF{$\ell'$ 被 $\mathcal{L}(v)$ 保留}
+          \STATE 将 $\ell'$ 插入 $Q$
         \ENDIF
       \ENDFOR
     \ENDWHILE
-    \RETURN $best$ 对应的节点路径
+    \RETURN $p_{\mathrm{best}}$
   \end{algorithmic}
 \end{algorithm}
 
-其中，\texttt{AdmitLabel} 是切片算法的关键。若启用 bucket，则候选 label 先按
+设每个节点最多保留 $K$ 条候选前缀，则活跃前缀数为 $O(K|V|)$，边扩展次数为 $O(K|E|)$。每次扩展若对长度为 $h$ 的前缀重新计算 $T_{\max}$、等待退相干和 Bell 对角态交换，则物理度量计算代价为 $O(h)$。因此，切片算法用 $K$ 倍级别的候选保留开销，换取对不同时间瓶颈前缀的覆盖。
 
+\section{切片算法的下界证明}
+\label{sec:sliced-lower-bound}
+
+切片 Dijkstra 的下界可以写得比单标签 Dijkstra 更细。关键不只是它返回了一条可行路径，还在于它实际保留下了一部分完整候选路径。令 $\mathcal{R}_{K,\Delta_B}\subseteq \mathcal{P}_{s,t}$ 表示切片算法在给定 $K$ 与 $\Delta_B$ 下能够完整生成并保留到终点的路径集合。算法返回路径 $p_S$ 满足
+\begin{equation}
+  F_S
+  =
+  F_{\mathrm{path}}(p_S)
+  =
+  \max_{p\in\mathcal{R}_{K,\Delta_B}}
+  F_{\mathrm{path}}(p).
+  \label{eq:sliced-retained-best}
+\end{equation}
+因此，相对于实际最优路径有
+\begin{equation}
+  \frac{F_S}{F^\star}
+  \ge
+  \frac{
+    \max_{p\in\mathcal{R}_{K,\Delta_B}}F_{\mathrm{path}}(p)
+  }{
+    F^\star
+  }.
+  \label{eq:sliced-retained-lower-bound}
+\end{equation}
+式~\eqref{eq:sliced-retained-lower-bound} 是切片算法比单标签基线更有意义的实例级下界：它直接由算法保留下来的完整路径集合决定。
+
+进一步，由命题 1 可知，只要切片算法返回一条可行简单路径 $p_S$，就有
+\begin{equation}
+  \frac{F_S}{F^\star}
+  \ge
+  \alpha_G^{h(p_S)}
+  \ge
+  \alpha_G^H.
+  \label{eq:sliced-unconditional-lower-bound}
+\end{equation}
+这给出与单标签 Dijkstra 相同形式的无条件参数下界。
+
+切片算法能够取得更强保证的条件可以形式化为前缀覆盖。设 $p^\star=(v_0,\ldots,v_h)$，其第 $i$ 个前缀记为
 \[
-\left\lfloor \frac{T_{\max}}{B} \right\rfloor
+p^\star_i=(v_0,\ldots,v_i).
 \]
+若对所有 $i=0,\ldots,h$，前缀 $p^\star_i$ 在算法处理节点 $v_i$ 时均被保留，则 $p^\star\in\mathcal{R}_{K,\Delta_B}$，从而由式~\eqref{eq:sliced-retained-best} 得
+\begin{equation}
+  F_S = F^\star.
+  \label{eq:sliced-exact-condition}
+\end{equation}
+因此，切片 Dijkstra 的精确性不来自时间切片本身，而来自它是否保留了实际最优路径的所有必要前缀。
 
-落入固定时间桶；同一节点同一桶中只保留 \texttt{IsBetter} 意义下最好的代表。若未启用 bucket，则采用 \texttt{Dominates} 定义的 Pareto 支配关系：只有当一个 label 在 \texttt{predicted\_fidelity} 上不低、在 \texttt{t\_max\_ms} 上不高，并且至少一项严格更好时，才可以删除另一个 label。每次插入后，同一节点的标签集合都会按 \texttt{IsBetter} 排序，并截断到最多 $K$ 条。
-
-设图中节点数为 $|V|$、边数为 $|E|$。由于每个节点最多保留 $K$ 条 label，搜索过程中最多有 $O(K|V|)$ 个活跃 label，每个活跃 label 至多扩展其出边一次，因此边扩展次数为 $O(K|E|)$。每次扩展需要调用 \texttt{ExtendLabel} 对整条前缀重算 $T_{\max}$、等待退相干和 Bell 对角态交换；若当前前缀长度为 $h$，这一部分代价为 $O(h)$。此外，\texttt{AdmitLabel} 至多扫描同节点的 $K$ 条 label，优先队列操作带来 $O(\log(K|V|))$ 的代价。因此，切片算法相对于单标签基线的额外成本主要来自两个方面：同一节点保留多个候选，以及每个候选扩展时无法使用加性增量更新，只能重算完整前缀。
-
-\subsection{为什么切片能缓解反转}
-
-对当前模型来说，\texttt{Sliced Dijkstra} 的价值在于它不会把所有前缀都压缩成一个 incumbent。只要两个候选前缀落在不同的 $T_{\max}$ 切片里，它们就可以同时留下来。这样，当后缀的等待敏感性足够强时，算法仍然有机会从保留下来的慢前缀和快前缀之间选出真正更优的那一条，而不是被单标签基线提前锁死。
-
-从这个角度看，\texttt{Sliced Dijkstra} 不是“更复杂的 \texttt{Dijkstra}”，而是对非保序度量的一种结构化修正。
-
-\subsection{算法保证与限制}
-
-需要特别说明的是，\texttt{Sliced Dijkstra} 是一种面向当前非保序度量的启发式修正，而不是全局最优路径枚举算法。它相对单标签 \texttt{Dijkstra} 的优势在于扩大了同一节点可保留的前缀集合，尤其允许不同 $T_{\max}$ 切片的候选共存；但只要 $K$ 有限，或者同一 bucket 内仍然只保留一个局部代表，它就仍然可能丢弃某条未来会变好的前缀。
-
-更形式化地说，若希望切片算法严格不劣于单标签 \texttt{Dijkstra}，至少需要满足如下条件之一：
-
-\begin{enumerate}
-  \item 切片算法在每个节点保留了单标签 \texttt{Dijkstra} 最终路径所需的所有前缀；
-  \item 或者，被保留的前缀能够在任意后缀扩展下支配被删除的前缀。
-\end{enumerate}
-
-当前实现并不保证这两个条件。特别是在同一节点、同一 $T_{\max}$ bucket 内，局部 \texttt{predicted\_fidelity} 更高的 label 不一定能够代表同桶内所有其他 label。一个局部分数稍低但 $T_{\max}$ 更小、跳数更少的前缀，可能在接入后续链路后重新胜出。因此，本文将 \texttt{Sliced Dijkstra} 定位为降低前缀陷阱概率的多标签基线，而不是具有最优性保证的精确算法。若后续实验需要报告“切片增强算法不低于单标签基线”的工程结果，可以在外层加入 baseline fallback：同时运行单标签 \texttt{Dijkstra} 与切片算法，并用同一个 \texttt{BottleneckFidelityRoutingMetric} 重新评估两条完整路径，最终返回预测保真度更高者。
-
-\section{证明与实现对照}
-\label{sec:proof-implementation}
-
-当前代码中的 \texttt{BottleneckFidelityRoutingMetric} 已经把证明中的关键量都显式暴露出来了：
-
-\begin{itemize}
-  \item \texttt{t\_max\_ms} 对应路径的时间瓶颈；
-  \item \texttt{predicted\_fidelity} 对应路径的当前打分；
-  \item \texttt{IsBetter} 先比较 \texttt{predicted\_fidelity}，再比较 \texttt{t\_max\_ms}，最后比较路径长度；
-  \item \texttt{Dominates} 则要求在保真度和时间瓶颈上同时不劣，且至少一项严格更好。
-\end{itemize}
-
-因此，论文里的理论分析和代码实现是一致的：单标签 \texttt{Dijkstra} 只能作为基线，而真正有能力保留潜在反转路径的，是按 $T_{\max}$ 保留多个 slice 的多标签搜索。
-
-\section{实验设计占位}
-\label{sec:experiment-placeholder}
-
-本章暂不报告最终实验数值，只保留后续验证所需的设计占位。后续实验将重点检查以下问题：
-
-\begin{enumerate}
-  \item 在手工构造的前缀陷阱拓扑上，单标签 \texttt{Dijkstra} 是否会在中间节点过早剪枝；
-  \item \texttt{Sliced Dijkstra} 是否能保留不同 $T_{\max}$ 切片，从而恢复被单标签丢掉的候选；
-  \item 在真实拓扑和随机拓扑上，切片宽度 \texttt{BucketWidthMs} 与保留上限 $K$ 如何影响路由结果；
-  \item 最终选路是否与混态仿真得到的端到端保真度一致。
-\end{enumerate}
-
-这些结果将在后续实验章节中补充。当前版本先给出理论模型、算法语义与证明骨架，以保证后续实验叙述不会偏离代码实现。
+需要强调的是，有限 $K$ 和有限桶宽并不能自动保证式~\eqref{eq:sliced-exact-condition} 的前缀覆盖条件。若实际最优路径的某个前缀与另一个局部保真度更高的前缀落入同一时间桶，且该桶只保留一个代表，则最优前缀仍可能被删除。此时切片算法不一定优于单标签 Dijkstra，其无条件最坏情形下界仍为式~\eqref{eq:sliced-unconditional-lower-bound}。换言之，切片算法提高的是保留关键前缀的机会；严格最优性需要由前缀覆盖条件或全路径枚举来保证。

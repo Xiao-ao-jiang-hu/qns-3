@@ -6,7 +6,7 @@
 \chapter{量子网络物理建模}
 \label{chap:phymodel}
 
-本章给出本文采用的多跳量子中继网络物理模型。该模型以路径为评价对象：一条候选路径由若干量子链路段组成，每一段链路均携带初始保真度、建链时间、噪声类型以及端点相干时间等参数。路由层在扩展候选路径时，根据完整路径段序列重新计算路径时间瓶颈 $T_{\max}$、各段等待时间、存储退相干后的 Bell 对角态以及递归纠缠交换后的端到端保真度。后续章节对路由度量非保序性、\texttt{DijkstraRoutingProtocol} 基线以及 \texttt{SlicedDijkstraRoutingProtocol} 的分析，均建立在本章定义的路径级物理语义之上。
+本章给出本文采用的多跳量子中继网络物理模型。该模型以路径为评价对象：一条候选路径由若干量子链路段组成，每一段链路均携带初始保真度、建链时间、噪声类型以及端点相干时间等参数。路由层在扩展候选路径时，根据完整路径段序列重新计算路径时间瓶颈 $T_{\max}$、各段等待时间、存储退相干后的 Bell 对角态以及递归纠缠交换后的端到端保真度。后续章节对路由度量非保序性、单标签 Dijkstra 基线以及切片 Dijkstra 算法的分析，均建立在本章定义的路径级物理语义之上。
 
 \section{多跳量子中继网络的物理模型}
 \label{sec:network-model}
@@ -25,17 +25,17 @@ p = (v_0, v_1, \ldots, v_h),
 e_j = (v_{j-1}, v_j)
 \]
 
-记为一条路径段。本文在路由标签中保留各路径段的物理参数，用于后续的路径级保真度计算。每一段链路包含以下信息：
+记为一条路径段。本文以路径段序列描述候选路径，并以各段物理参数作为路径级保真度计算的输入。每一段链路包含以下信息：
 
 \begin{itemize}
   \item 左右端节点名；
-  \item 初始保真度 \texttt{initialFidelity}；
-  \item 噪声族 \texttt{noiseFamily}；
-  \item 量子链路建立时间 \texttt{setupTimeMs}；
+  \item 初始保真度 $F_j^{(0)}$；
+  \item 噪声模型族 $\mathcal{N}_j$；
+  \item 量子链路建立时间 $T_j$；
   \item 左右端节点的相干时间 $\tau$。
 \end{itemize}
 
-上述参数由链路层和物理层共同给出。\texttt{initialFidelity} 描述纠缠生成后单跳 Bell 对的初始质量，其数值受信道噪声和纠缠制备过程影响；\texttt{setupTimeMs} 表示该链路建立纠缠所需的时间，优先取 \texttt{quantumSetupTimeMs}，未显式给出时再依次由 \texttt{UseCurrentLinkDelay}、\texttt{latency} 与 \texttt{classicalControlDelayMs} 推定；$\tau$ 表示端点量子存储器的相干时间。链路可用性由 \texttt{isAvailable} 与 \texttt{successRate} 共同约束：当 \texttt{isAvailable} 为假或 \texttt{successRate} $\le 0$ 时，该链路不参与路径扩展；对于已经进入候选集合的链路，本文的 \texttt{predicted\_fidelity} 度量不再额外引入 \texttt{successRate} 因子。
+上述参数由链路层和物理层共同给出。初始保真度 $F_j^{(0)}$ 描述纠缠生成后单跳 Bell 对的初始质量，其数值受信道噪声和纠缠制备过程影响；建链时间 $T_j$ 表示该链路建立纠缠所需的时间；$\tau$ 表示端点量子存储器的相干时间。本文的保真度度量只讨论已具备纠缠生成能力的候选链路，链路成功率可在吞吐量或资源分配模型中另行处理，不作为端到端 Bell 保真度的乘性因子。
 
 对应地，单跳链路的初始 Bell 态仍按 Werner 态参数化：
 \begin{equation}
@@ -49,7 +49,7 @@ e_j = (v_{j-1}, v_j)
     \right)
   \label{eq:werner-init}
 \end{equation}
-其中$\vert\Phi^\pm\rangle,\vert\Psi^\pm\rangle$为四个Bell基态。
+其中 $\vert\Phi^\pm\rangle,\vert\Psi^\pm\rangle$ 为四个 Bell 基态。
 
 \subsection{纠缠交换协议的时序模型}
 
@@ -57,11 +57,11 @@ e_j = (v_{j-1}, v_j)
 
 \begin{enumerate}
   \item 路径上的各段链路在同一轮评估中同时开始建立纠缠；
-  \item 每段链路的就绪时间由其 \texttt{setupTimeMs} 给出；
+  \item 每段链路的就绪时间由其建链时间 $T_j$ 给出；
   \item 整条路径的统一对齐时刻定义为
   \begin{equation}
     T_{\max}(p) = \max_{1 \le j \le h} T_j,
-    \qquad T_j \equiv \texttt{setupTimeMs}(e_j);
+    \qquad T_j \equiv T(e_j);
     \label{eq:path-tmax}
   \end{equation}
   \item 更快完成的链路必须等待较慢链路，于是第 $j$ 段的等待时间为
@@ -88,6 +88,7 @@ e_j = (v_{j-1}, v_j)
   \lambda(\Delta t, \tau) = e^{-\Delta t / \tau},
   \label{eq:phase-flip-memory}
 \end{equation}
+其中 $\lambda$ 为相干衰减系数。
 对一对以式~\eqref{eq:werner-init}初始化的 Bell 对，若左右两端量子比特分别等待 $\Delta t_L,\Delta t_R$，则等待后的二体量子态仍保持 Bell 对角形式：
 \begin{equation}
   \rho_i(\Delta t_L, \Delta t_R)
@@ -124,33 +125,39 @@ e_j = (v_{j-1}, v_j)
 \end{equation}
 其中 $a$ 即相对于 $\vert\Phi^+\rangle$ 的 Bell 保真度。对两端等待导致的相位翻转退相干，可定义等待算子
 \begin{equation}
+  \begin{aligned}
   \mathcal{M}_{\Lambda}(a, b, c, d)
   =
-  \left(
+  \biggl(&
     \frac{1 + \Lambda}{2}a + \frac{1 - \Lambda}{2}b,\;
-    \frac{1 - \Lambda}{2}a + \frac{1 + \Lambda}{2}b,\;
+    \frac{1 - \Lambda}{2}a + \frac{1 + \Lambda}{2}b, \\
+  &
     \frac{1 + \Lambda}{2}c + \frac{1 - \Lambda}{2}d,\;
     \frac{1 - \Lambda}{2}c + \frac{1 + \Lambda}{2}d
-  \right),
+  \biggr),
+  \end{aligned}
   \label{eq:bell-memory-operator}
 \end{equation}
 其中 $\Lambda$ 由式~\eqref{eq:single-link-bell-weights} 给出。
 
 若两段相邻路径的端到端态分别为 $w=(a,b,c,d)$ 与 $w'=(a',b',c',d')$，则一次理想纠缠交换后的输出仍为 Bell 对角态，其 Bell 权重满足
 \begin{equation}
+  \begin{aligned}
   \mathcal{S}(w, w')
   =
-  \bigl(
+  \bigl(&
     aa' + bb' + cc' + dd',\;
-    ab' + ba' + cd' + dc',\;
+    ab' + ba' + cd' + dc', \\
+  &
     ac' + ca' + bd' + db',\;
     ad' + da' + bc' + cb'
   \bigr).
+  \end{aligned}
   \label{eq:bell-swap-operator}
 \end{equation}
 由此，多跳端到端纠缠保真度可通过 Bell 对角态递推得到：首先根据式~\eqref{eq:path-wait} 对各跳 Bell 对施加等待算子 $\mathcal{M}_{\Lambda}$，随后沿路径顺序递归施加交换算子 $\mathcal{S}$。递推结束后，输出 Bell 对角态的第一个分量即为端到端 $\vert\Phi^+\rangle$ 保真度。
 
-在 qns-3 的路由标签中，上述路径级计算结果分别记录为 \texttt{predicted\_fidelity} 与 \texttt{t\_max\_ms}。特别地，在\emph{无额外等待}且输入均为 Werner 态的情形，若两条相邻链路初始保真度分别为 $F_1,F_2$，则一次纠缠交换后的 Bell 保真度为
+记路径级递推得到的端到端保真度为 $F_{\mathrm{path}}(p)$。特别地，在\emph{无额外等待}且输入均为 Werner 态的情形，若两条相邻链路初始保真度分别为 $F_1,F_2$，则一次纠缠交换后的 Bell 保真度为
 \begin{equation}
   F_{\mathrm{swap}}
   = F_1 F_2 + \frac{(1 - F_1)(1 - F_2)}{3}
